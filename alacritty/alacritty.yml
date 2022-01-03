@@ -1,7 +1,7 @@
 # Configuration for Alacritty, the GPU enhanced terminal emulator
 
 import:
-  - ~/.config/alacritty/colors.yml
+  - ~/.config/alacritty/dracula.yml
 
 # Any items in the `env` entry below will be added as
 # environment variables. Some entries may override variables
@@ -15,6 +15,7 @@ env:
   # You can verify this by checking for the presence of `smso` and `sitm` in
   # `infocmp xterm-256color`.
   TERM: xterm-256color
+  PATH: /usr/local/bin:/opt/nvim-osx64/bin:/Users/barp23/google-cloud-sdk/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/kubebuilder/bin
   # TERM:"" nvim
 window:
   # Window dimensions in character columns and lines

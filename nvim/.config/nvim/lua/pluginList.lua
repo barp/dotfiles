@@ -309,7 +309,7 @@ return packer.startup(function()
 		requires = {
 			"williamboman/nvim-lsp-installer",
 			"ray-x/lsp_signature.nvim",
-			"glepnir/lspsaga.nvim",
+			"MunifTanjim/nui.nvim",
 		},
 		config = function()
 			require("plugins.lspconfig")

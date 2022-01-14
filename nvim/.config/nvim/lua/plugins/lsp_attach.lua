@@ -22,7 +22,7 @@ M.on_attach = function(client, bufnr)
 	buf_set_keymap("n", "]g", "<cmd>lua vim.lsp.diagnostic.goto_next()<CR>", opts)
 	buf_set_keymap("n", "<space>q", "<cmd>lua vim.lsp.diagnostic.set_loclist()<CR>", opts)
 
-	buf_set_keymap("n", "<leader>rn", "<cmd>lua require('lspsaga.rename').rename()<CR>", opts)
+	buf_set_keymap("n", "<leader>rn", "<cmd>lua require('lsprenameui').lsp_rename()<CR>", opts)
 
 	buf_set_keymap(
 		"n",

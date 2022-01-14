@@ -1,0 +1,8 @@
+os:
+  editCommand: "nvr -cc split --remote-wait +'set bufhidden=wipe'"
+  openCommand: "nvr -cc split --remote-wait +'set bufhidden=wipe'"
+customCommands:
+  - key: '<c-p>'
+    command: "git push origin HEAD:refs/for/{{.CheckedOutBranch.UpstreamName}}"
+    context: 'global'
+    loadingText: 'pushing'

@@ -81,6 +81,11 @@ return packer.startup(function()
 	})
 
 	use({
+		"JoosepAlviste/nvim-ts-context-commentstring",
+		after = "nvim-treesitter",
+	})
+
+	use({
 		"rafamadriz/friendly-snippets",
 	})
 

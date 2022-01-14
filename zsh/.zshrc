@@ -153,6 +153,8 @@ alias pacinstall="pacman -Slq | fzf -m --preview 'cat <(pacman -Si {1}) <(pacman
 alias yayinstall="yay -Slq | fzf -m --preview 'cat <(yay -Si {1}) <(yay -Fl {1} | awk \"{print \$2}\")' | xargs -ro sudo pacman -S"
 alias aptinstall="apt-cache search \".*\" | fzf -m --preview 'cat <(apt-cache show {1})' | awk '{print \$1}' | xargs -ro sudo apt install "
 
+export PATH="$PATH:$HOME/go/bin:$HOME/.cargo/bin"
+
 # User configuration
 
 # export MANPATH="/usr/local/man:$MANPATH"

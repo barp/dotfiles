@@ -9,6 +9,7 @@ null_ls.setup({
 	sources = {
 		formatting.stylua,
 		formatting.goimports,
+		formatting.shfmt,
 		diagnostics.shellcheck,
 		codeactions.shellcheck,
 	},

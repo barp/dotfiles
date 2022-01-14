@@ -1,10 +1,10 @@
 #!/bin/bash
-if command -v pacman &> /dev/null; then
-    ./0-packages.arch.sh
-elif command -v apt-get &> /dev/null; then
-    ./0-packages.debian.sh
+if command -v pacman &>/dev/null; then
+	./0-packages.arch.sh
+elif command -v apt-get &>/dev/null; then
+	./0-packages.debian.sh
 else
-    echo "Unsupported distrobution"
+	echo "Unsupported distrobution"
 fi
 
 ./install-zsh.sh

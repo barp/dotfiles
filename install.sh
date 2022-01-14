@@ -7,4 +7,6 @@ else
     echo "Unsupported distrobution"
 fi
 
+./install-zsh.sh
+
 find . -maxdepth 1 -type d -regex '\./[^.]*' -not -regex '.*-mac$' | stow

@@ -1,5 +1,10 @@
 local cmp = require("cmp")
 local luasnip = require("luasnip")
+local ok, extra_sources = pcall(require, "sources.extra_sources")
+
+if not ok then
+	extra_sources = {}
+end
 
 require("luasnip.loaders.from_vscode").lazy_load()
 
@@ -98,13 +103,13 @@ cmp.setup({
 			return vim_item
 		end,
 	},
-	sources = {
+	sources = vim.list_extend({
 		{ name = "nvim_lsp" },
 		{ name = "nvim_lua" },
 		{ name = "luasnip" },
 		{ name = "buffer" },
 		{ name = "path" },
-	},
+	}, extra_sources),
 	confirm_opts = {
 		behavior = cmp.ConfirmBehavior.Replace,
 		select = false,
@@ -113,7 +118,7 @@ cmp.setup({
 		border = { "╭", "─", "╮", "│", "╯", "─", "╰", "│" },
 	},
 	experimental = {
-		ghost_text = false,
+		ghost_text = true,
 		native_menu = false,
 	},
 })

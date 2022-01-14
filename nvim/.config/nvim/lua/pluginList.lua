@@ -148,7 +148,6 @@ return packer.startup(function()
 
 	use({
 		"nvim-lua/plenary.nvim",
-		after = "bufferline.nvim",
 	})
 	use({
 		"nvim-lua/popup.nvim",
@@ -329,6 +328,7 @@ return packer.startup(function()
 		after = {
 			"nvim-lspconfig",
 			"LuaSnip",
+			"plenary.nvim",
 		},
 		requires = {
 			"hrsh7th/cmp-buffer",

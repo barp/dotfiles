@@ -26,13 +26,6 @@ local function nui_lsp_rename()
 			-- the `result` contains all the places we need to update the
 			-- name of the identifier. so we apply those edits.
 			vim.lsp.util.apply_workspace_edit(result)
-
-			-- after the edits are applied, the files are not saved automatically.
-			-- let's remind ourselves to save those...
-			local total_files = vim.tbl_count(result.documentChanges)
-			print(
-				string.format("Changed %s file%s. To save them run ':wa'", total_files, total_files > 1 and "s" or "")
-			)
 		end)
 	end
 

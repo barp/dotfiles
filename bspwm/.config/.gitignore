@@ -1,0 +1,4 @@
+bspwm/polybar/.module
+bspwm/polybar/.system
+bspwm/custom/*
+xfce4/xfconf/xfce-perchannel-xml/thunar.xml

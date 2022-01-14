@@ -1,2 +1,3 @@
 #!/bin/bash
-yay -S --noconfirm --needed alacritty rofi bspwm sxhkd dunst ksuperkey xfce4-power-manager xsettingsd bmon networkmanager mpc alsa-utils betterlockscreen xfce-polkit xorg-xrdb xsettingsd ranger thunar thunar-archive-plugin thunar-media-tags-plugin thunar-volman nitrogen gvfs gvfs-mtp gvfs-afc gvfs-gphoto2 gvfs-smb gvfs-google networkmanager-dmenu-git light polybar mpd python-pip playerctl picom ttf-iosevka-nerd ttf-sarasa-gothic nerd-fonts-inconsolata stow
+# shellcheck disable=2046
+yay -S --noconfirm --needed $(cat packages.arch.txt)

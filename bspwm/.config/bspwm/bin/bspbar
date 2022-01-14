@@ -6,7 +6,7 @@
 ## Files and Directories
 DIR="$HOME/.config/bspwm/polybar"
 SFILE="$DIR/system"
-RFILE="$DIR/.system"
+SDFILE="$DIR/system-default"
 MFILE="$DIR/.module"
 
 ## Get system variable values for various modules
@@ -19,6 +19,7 @@ get_values() {
 
 ## Write values to `system` file
 set_values() {
+  cp "$SDFILE" "$SFILE"
 	if [[ "$ADAPTER" ]]; then
 		sed -i -e "s/adapter = .*/adapter = $ADAPTER/g" 						${SFILE}
 	fi
@@ -59,9 +60,8 @@ launch_bar() {
 }
 
 # Execute functions
-if [[ ! -f "$RFILE" ]]; then
+if [[ ! -f "${SFILE}" ]]; then
 	get_values
 	set_values
-	touch ${RFILE}
 fi
 launch_bar

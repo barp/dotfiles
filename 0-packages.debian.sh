@@ -4,7 +4,7 @@
 # --------------------------
 # Install common build helpers
 # --------------------------
-sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev python3 libxtst-dev libx11-dev make gcc git meson stow
+sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev python3 libxtst-dev libx11-dev make gcc git meson 
 
 # install latest rust builder
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -75,7 +75,7 @@ rm -rf nerd-fonts
 sudo apt-get install rofi bspwm sxhkd dunst xfce4-power-manager \
   network-manager x11-server-utils \
   xsettingsd bmon mpc alsa-utils xsettingsd ranger thunar thunar-archive-plugin thunar-media-tags-plugin thunar-volman \
-  nitrogen light polybar mpd python3-pip playerctl picom
+  nitrogen light polybar mpd python3-pip playerctl picom stow
 
 # Will take care of later
 # betterlockscreen

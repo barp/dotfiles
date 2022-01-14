@@ -4,7 +4,7 @@
 # --------------------------
 # Install common build helpers
 # --------------------------
-sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev python3 libxtst-dev libx11-dev make gcc git meson
+sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev python3 libxtst-dev libx11-dev make gcc git meson stow
 
 # install latest rust builder
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

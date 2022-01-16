@@ -75,7 +75,7 @@ rm -rf nerd-fonts
 sudo apt-get install rofi bspwm sxhkd dunst xfce4-power-manager \
   network-manager x11-server-utils \
   xsettingsd bmon mpc alsa-utils xsettingsd ranger thunar thunar-archive-plugin thunar-media-tags-plugin thunar-volman \
-  nitrogen light polybar mpd python3-pip playerctl picom stow
+  nitrogen light polybar mpd python3-pip playerctl picom stow plank openbox-menu openbox
 
 # Will take care of later
 # betterlockscreen

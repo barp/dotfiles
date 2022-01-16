@@ -578,7 +578,7 @@
     <!-- Lockscreen -->
     <keybind key="C-A-l">
       <action name="Execute">
-        <command>betterlockscreen --lock</command>
+        <command>~/.config/openbox/scripts/lock</command>
       </action>
     </keybind>
     <!-- Openbox -->

@@ -19,12 +19,12 @@ capabilities.textDocument.completion.completionItem.snippetSupport = true
 lspinstall.on_server_ready(function(server)
 	local opts = {
 		capabilities = capabilities,
+		on_attach = on_attach,
 	}
 	local lang = server.languages[1]
 	if lang == "lua" then
 		opts = vim.tbl_deep_extend("force", {
 			root_dir = vim.loop.cwd,
-			on_attach = on_attach,
 			settings = {
 				Lua = {
 					diagnostics = {
@@ -50,7 +50,6 @@ lspinstall.on_server_ready(function(server)
 		opts = vim.tbl_deep_extend("force", jsonls_opts, opts)
 	elseif server.name == "pyright" then
 		opts = vim.tbl_deep_extend("force", {
-			on_attach = on_attach,
 			settings = {
 				python = {
 					analysis = {
@@ -58,10 +57,6 @@ lspinstall.on_server_ready(function(server)
 					},
 				},
 			},
-		}, opts)
-	else
-		opts = vim.tbl_deep_extend("force", {
-			on_attach = on_attach,
 		}, opts)
 	end
 

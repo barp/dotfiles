@@ -12,7 +12,7 @@ end
 vim.cmd([[
   augroup packer_user_config
     autocmd!
-    autocmd BufWritePost pluginList.lua source <afile> | PackerSync
+    autocmd BufWritePost pluginList.lua luafile <afile> | PackerSync
   augroup END
 ]])
 
@@ -288,13 +288,6 @@ return packer.startup(function()
 		run = "pip3 install neovim-remote",
 		config = function()
 			require("plugins.term")
-		end,
-	})
-
-	use({
-		"rcarriga/nvim-notify",
-		config = function()
-			require("plugins.notify")
 		end,
 	})
 

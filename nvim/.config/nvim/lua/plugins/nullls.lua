@@ -10,6 +10,7 @@ null_ls.setup({
 		formatting.stylua,
 		formatting.goimports,
 		formatting.shfmt,
+		formatting.yapf,
 		diagnostics.shellcheck,
 		codeactions.shellcheck,
 	},

@@ -11,6 +11,7 @@ null_ls.setup({
 		formatting.goimports,
 		formatting.shfmt,
 		formatting.yapf,
+		formatting.isort,
 		diagnostics.shellcheck,
 		codeactions.shellcheck,
 	},

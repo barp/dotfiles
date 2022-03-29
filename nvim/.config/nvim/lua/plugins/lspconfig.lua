@@ -48,6 +48,10 @@ lspinstall.on_server_ready(function(server)
 	elseif server.name == "jsonls" or server.name == "yamlls" then
 		local jsonls_opts = require("jsonls")[server.name]
 		opts = vim.tbl_deep_extend("force", jsonls_opts, opts)
+	elseif server.name == "clangd" then
+		opts = vim.tbl_deep_extend("force", opts, {
+			cmd = { "clangd", "--enable-config" },
+		})
 	elseif server.name == "pyright" then
 		opts = vim.tbl_deep_extend("force", {
 			settings = {

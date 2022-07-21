@@ -181,3 +181,5 @@ export PATH="$PATH:$HOME/go/bin:$HOME/.cargo/bin"
 # Example aliases
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
+
+export PATH="$HOME/.poetry/bin:$PATH"

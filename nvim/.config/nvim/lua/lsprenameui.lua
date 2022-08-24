@@ -17,7 +17,7 @@ local function nui_lsp_rename()
 		params.newName = new_name
 
 		-- send the `textDocument/rename` request to LSP server
-		vim.lsp.buf_request(0, "textDocument/rename", params, function(_, result, _, _)
+		vim.lsp.buf_request(0, "textDocument/rename", params, function(_, result, ctx, _)
 			if not result then
 				-- do nothing if server returns empty result
 				return
@@ -25,7 +25,7 @@ local function nui_lsp_rename()
 
 			-- the `result` contains all the places we need to update the
 			-- name of the identifier. so we apply those edits.
-			vim.lsp.util.apply_workspace_edit(result)
+			vim.lsp.util.apply_workspace_edit(result, vim.lsp.get_client_by_id(ctx.client_id).offset_encoding)
 		end)
 	end
 

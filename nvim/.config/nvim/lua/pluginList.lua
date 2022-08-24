@@ -35,7 +35,7 @@ return packer.startup(function()
 
 	use({
 		"feline-nvim/feline.nvim",
-		after = "nvim-base16.lua",
+		after = "base46",
 		config = function()
 			require("plugins.statusline")
 		end,
@@ -55,7 +55,7 @@ return packer.startup(function()
 
 	-- color related stuff
 	use({
-		"NvChad/nvim-base16.lua",
+		"NvChad/base46",
 		after = "packer.nvim",
 		config = function()
 			require("theme")
@@ -145,7 +145,7 @@ return packer.startup(function()
 
 	use({
 		"kyazdani42/nvim-web-devicons",
-		after = "nvim-base16.lua",
+		after = "base46",
 		config = function()
 			require("plugins.icons")
 		end,

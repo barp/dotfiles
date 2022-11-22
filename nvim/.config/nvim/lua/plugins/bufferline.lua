@@ -46,79 +46,79 @@ bufferline.setup({
 	},
 	highlights = {
 		fill = {
-			guifg = colors.grey_fg,
-			guibg = colors.black2,
+			fg = colors.grey_fg,
+			bg = colors.black2,
 		},
 		background = {
-			guifg = colors.grey_fg,
-			guibg = colors.black2,
+			fg = colors.grey_fg,
+			bg = colors.black2,
 		},
 		-- buffers
 		buffer_visible = {
-			guifg = colors.light_grey,
-			guibg = colors.black2,
+			fg = colors.light_grey,
+			bg = colors.black2,
 		},
 		buffer_selected = {
-			guifg = colors.white,
-			guibg = colors.black,
-			gui = "bold",
+			fg = colors.white,
+			bg = colors.black,
+			bold = true,
 		},
 		-- tabs
 		tab = {
-			guifg = colors.light_grey,
-			guibg = colors.one_bg3,
+			fg = colors.light_grey,
+			bg = colors.one_bg3,
 		},
 		tab_selected = {
-			guifg = colors.black2,
-			guibg = colors.nord_blue,
+			fg = colors.black2,
+			bg = colors.nord_blue,
 		},
 		tab_close = {
-			guifg = colors.red,
-			guibg = colors.black,
+			fg = colors.red,
+			bg = colors.black,
 		},
 		indicator_selected = {
-			guifg = colors.black,
-			guibg = colors.black,
+			fg = colors.black,
+			bg = colors.black,
 		},
 		-- separators
 		separator = {
-			guifg = colors.black2,
-			guibg = colors.black2,
+			fg = colors.black2,
+			bg = colors.black2,
 		},
 		separator_visible = {
-			guifg = colors.black2,
-			guibg = colors.black2,
+			fg = colors.black2,
+			bg = colors.black2,
 		},
 		separator_selected = {
-			guifg = colors.black2,
-			guibg = colors.black2,
+			fg = colors.black2,
+			bg = colors.black2,
 		},
 		-- modified
 		modified = {
-			guifg = colors.red,
-			guibg = colors.black2,
+			fg = colors.red,
+			bg = colors.black2,
 		},
 		modified_visible = {
-			guifg = colors.red,
-			guibg = colors.black2,
+			fg = colors.red,
+			bg = colors.black2,
 		},
 		modified_selected = {
-			guifg = colors.green,
-			guibg = colors.black,
+			fg = colors.green,
+			bg = colors.black,
 		},
 		-- close buttons
 
 		close_button = {
-			guifg = colors.light_grey,
-			guibg = colors.black2,
+			fg = colors.light_grey,
+			bg = colors.black2,
 		},
 		close_button_visible = {
-			guifg = colors.light_grey,
-			guibg = colors.black2,
+			fg = colors.light_grey,
+			bg = colors.black2,
 		},
 		close_button_selected = {
-			guifg = colors.red,
-			guibg = colors.black,
+			fg = colors.red,
+			bg = colors.black,
 		},
 	},
 })

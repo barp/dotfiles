@@ -54,7 +54,7 @@ M.on_attach = function(client, bufnr)
 	buf_set_keymap("v", "<leader>ca", ":Telescope lsp_range_code_actions theme=get_cursor<CR>", opts)
 
 	-- Set some keybinds conditional on server capabilities
-	if client.resolved_capabilities.document_formatting then
+	if client.server_capabilities.documentFormattingProvider then
 		vim.cmd(
 			[[
      augroup LspFormatting
@@ -64,11 +64,11 @@ M.on_attach = function(client, bufnr)
      ]],
 			false
 		)
-	elseif client.resolved_capabilities.document_range_formatting then
+	elseif client.server_capabilities.documentRangeFormattingProvider then
 		buf_set_keymap("n", "<space>f", "<cmd>lua vim.lsp.buf.range_formatting()<CR>", opts)
 	end
 
-	if client.resolved_capabilities.document_highlight then
+	if client.server_capabilities.hoverProvider then
 		vim.api.nvim_exec(
 			[[
      augroup lsp_document_highlight

@@ -68,7 +68,7 @@ M.on_attach = function(client, bufnr)
 		buf_set_keymap("n", "<space>f", "<cmd>lua vim.lsp.buf.range_formatting()<CR>", opts)
 	end
 
-	if client.server_capabilities.hoverProvider then
+	if client.server_capabilities.documentHighlightProvider then
 		vim.api.nvim_exec(
 			[[
      augroup lsp_document_highlight

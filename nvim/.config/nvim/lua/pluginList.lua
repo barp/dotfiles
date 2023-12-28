@@ -71,20 +71,6 @@ return packer.startup(function()
 		end,
 	})
 
-	-- lsp stuff
-	use({
-		"nvim-treesitter/nvim-treesitter",
-		event = "BufRead",
-		config = function()
-			require("plugins.treesitter")
-		end,
-	})
-
-	use({
-		"JoosepAlviste/nvim-ts-context-commentstring",
-		after = "nvim-treesitter",
-	})
-
 	use({
 		"rafamadriz/friendly-snippets",
 	})
@@ -212,6 +198,16 @@ return packer.startup(function()
 			require("plugins.startify")
 		end,
 	})
+
+
+       -- lsp stuff
+       use({
+               "nvim-treesitter/nvim-treesitter",
+               event = "BufRead",
+               config = function()
+                       require("plugins.treesitter")
+               end,
+       })
 
 	-- git stuff
 	use({

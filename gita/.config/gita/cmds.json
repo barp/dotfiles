@@ -1,0 +1,10 @@
+{
+  "worktree-add": {
+    "cmd": "bash -c \"$HOME/.config/gita/worktree-add.sh\"",
+    "help": "Create worktree"
+  },
+  "worktree-remove": {
+    "cmd": "bash -c \"$HOME/.config/gita/worktree-remove.sh\"",
+    "help": "Remove worktree"
+  }
+}

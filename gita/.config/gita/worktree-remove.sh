@@ -1,5 +1,7 @@
 #!/bin/bash
 
+echo $@
+
 foldername=$(basename $PWD)
 
 mkdir -p $HOME/.workspaces

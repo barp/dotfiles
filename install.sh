@@ -3,6 +3,8 @@ if command -v pacman &>/dev/null; then
 	./0-packages.arch.sh
 elif command -v apt-get &>/dev/null; then
 	./0-packages.debian.sh
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+  ./0-packages.darwin.sh
 else
 	echo "Unsupported distrobution"
 fi

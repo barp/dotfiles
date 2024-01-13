@@ -32,9 +32,8 @@ rm -rf nerd-fonts
 # Install packages
 # --------------------------
 
-sudo apt-get install rofi \
-  bmon mpc ranger \
-  nitrogen light mpd python3-pip stow 
+sudo apt-get install \
+  python3-pip stow 
 
 # Will take care of later
 # betterlockscreen

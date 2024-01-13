@@ -11,5 +11,6 @@ fi
 
 ./install-zsh.sh
 ./install-tpm.sh
+./stow-generic.sh
 
 find . -maxdepth 1 -type d -regex '\./[^.]*' -not -regex '.*-mac$' -not -regex '^system$' | stow

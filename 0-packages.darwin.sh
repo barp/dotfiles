@@ -18,3 +18,5 @@ brew install nvim
 brew install --cask alacritty
 
 pip install gita
+
+stow alacritty-mac

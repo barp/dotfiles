@@ -15,5 +15,6 @@ brew install terraform
 brew install ripgrep
 brew install npm
 brew install nvim
+brew install --cask alacritty
 
 pip install gita

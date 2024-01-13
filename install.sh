@@ -1,17 +1,15 @@
 #!/bin/bash
 if command -v pacman &>/dev/null; then
-	./0-packages.arch.sh
+	./scripts/0-packages.arch.sh
 elif command -v apt-get &>/dev/null; then
-	./0-packages.debian.sh
+	./scripts/0-packages.debian.sh
 elif [[ "$OSTYPE" == "darwin"* ]]; then
-  ./0-packages.darwin.sh
+  ./scripts/0-packages.darwin.sh
 else
 	echo "Unsupported distrobution"
 fi
 
-./install-zsh.sh
-./install-tpm.sh
-./install-nvchad.sh
-./stow-generic.sh
-
-find . -maxdepth 1 -type d -regex '\./[^.]*' -not -regex '.*-mac$' -not -regex '^system$' | stow
+./scripts/install-zsh.sh
+./scripts/install-tpm.sh
+./scripts/install-nvchad.sh
+./scripts/stow-generic.sh

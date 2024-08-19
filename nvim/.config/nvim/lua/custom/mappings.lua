@@ -11,8 +11,8 @@ M.general = {
         require("conform").format()
       end,
       "formatting",
-    }
-
+    },
+    ["<leader>cx"] = { ":%bd|e#<CR>", "close all other buffers" },
   },
   v = {
     [">"] = { ">gv", "indent"},

@@ -5,3 +5,5 @@
 --   pattern = "*",
 --   command = "tabdo wincmd =",
 -- })
+
+vim.filetype.add({ extension = { templ = "templ" }})

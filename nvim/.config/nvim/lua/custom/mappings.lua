@@ -19,6 +19,18 @@ M.general = {
   },
 }
 
+-- telescope
+M.telescope = {
+  n = {
+    ["<leader>fs"] = {
+      function()
+        require("telescope.builtin").lsp_dynamic_workspace_symbols()
+      end,
+      "Search workspace symbols",
+    }
+  }
+}
+
 -- more keybinds!
 
 M.copilot = {

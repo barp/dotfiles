@@ -7,3 +7,8 @@
 -- })
 
 vim.filetype.add({ extension = { templ = "templ" }})
+
+vim.api.nvim_create_autocmd({"BufEnter"}, {
+  pattern = "*.go",
+  command = "setlocal tabstop=4 shiftwidth=4 noexpandtab",
+})

@@ -13,6 +13,7 @@ M.general = {
       "formatting",
     },
     ["<leader>cx"] = { ":%bd|e#<CR>", "close all other buffers" },
+    ["<leader>ee"] = { "oif err != nil {<CR>}<Esc>Oreturn err;<Esc>", "insert go error handling"}
   },
   v = {
     [">"] = { ">gv", "indent"},

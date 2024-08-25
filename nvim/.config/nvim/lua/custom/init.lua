@@ -1,4 +1,4 @@
--- local autocmd = vim.api.nvim_create_autocmd
+local autocmd = vim.api.nvim_create_autocmd
 
 -- Auto resize panes when resizing nvim window
 -- autocmd("VimResized", {
@@ -8,12 +8,12 @@
 
 vim.filetype.add({ extension = { templ = "templ" }})
 
-vim.api.nvim_create_autocmd({"BufEnter"}, {
+autocmd({"BufEnter"}, {
   pattern = "*.go",
   command = "setlocal tabstop=4 shiftwidth=4 noexpandtab",
 })
 
-vim.api.nvim_create_autocmd({"BufWritePost"}, {
+autocmd({"BufWritePost"}, {
   pattern = "*.go",
   callback = function()
     vim.cmd("silent! !golines -w %")

@@ -51,6 +51,7 @@ M.mason = {
     -- go
     "gopls",
     "golines",
+    "gofumpt",
   },
 }
 

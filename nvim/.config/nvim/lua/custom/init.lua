@@ -17,5 +17,6 @@ vim.api.nvim_create_autocmd({"BufWritePost"}, {
   pattern = "*.go",
   callback = function()
     vim.cmd("silent! !golines -w %")
+    vim.cmd("silent! !gofumpt -w %")
   end
 })

@@ -45,7 +45,10 @@ M.mason = {
     "terraform-ls",
 
     -- python
-    "pyright"
+    "pyright",
+
+    -- go
+    "gopls",
   },
 }
 

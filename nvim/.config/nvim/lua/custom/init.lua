@@ -12,3 +12,10 @@ vim.api.nvim_create_autocmd({"BufEnter"}, {
   pattern = "*.go",
   command = "setlocal tabstop=4 shiftwidth=4 noexpandtab",
 })
+
+vim.api.nvim_create_autocmd({"BufWritePost"}, {
+  pattern = "*.go",
+  callback = function()
+    vim.cmd("silent! !golines -w %")
+  end
+})

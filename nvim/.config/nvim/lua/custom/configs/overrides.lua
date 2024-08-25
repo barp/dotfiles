@@ -15,6 +15,7 @@ M.treesitter = {
     "go",
     "python",
     "templ",
+    "terraform",
   },
   indent = {
     enable = true,
@@ -49,6 +50,7 @@ M.mason = {
 
     -- go
     "gopls",
+    "golines",
   },
 }
 

@@ -46,4 +46,16 @@ M.copilot = {
   }
 }
 
+M.obsidian = {
+  n = {
+    ["<leader>op"] = {
+      function()
+        require("obsidian")
+        vim.api.nvim_command(":ObsidianQuickSwitch")
+      end,
+      "Quick Open Obsidian",
+    }
+  }
+}
+
 return M

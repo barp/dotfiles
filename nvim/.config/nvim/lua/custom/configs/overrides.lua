@@ -71,4 +71,17 @@ M.nvimtree = {
   },
 }
 
+M.obsidian = {
+  workspaces = {
+   {
+     name = "personal",
+     path = "~/Documents/Obsidian Vault",
+   },
+  },
+  completion = {
+    nvim_cmp = true,
+    min_chars = 2,
+  }
+}
+
 return M

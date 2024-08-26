@@ -20,3 +20,5 @@ autocmd({"BufWritePost"}, {
     vim.cmd("silent! !gofumpt -w %")
   end
 })
+
+vim.opt.conceallevel = 1

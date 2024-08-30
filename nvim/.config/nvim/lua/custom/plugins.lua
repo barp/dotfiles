@@ -6,6 +6,13 @@ local plugins = {
   -- Override plugin definition options
   --
   {
+    "elentok/format-on-save.nvim",
+    config = function()
+      require "custom.configs.format_on_save"
+    end,
+    lazy = false,
+  },
+  {
     "epwalsh/obsidian.nvim",
     version = "*",  -- recommended, use latest release instead of latest commit
     ft = "markdown",

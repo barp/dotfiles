@@ -13,12 +13,4 @@ autocmd({"BufEnter"}, {
   command = "setlocal tabstop=4 shiftwidth=4 noexpandtab",
 })
 
-autocmd({"BufWritePre"}, {
-  pattern = "*.go",
-  callback = function()
-    vim.cmd("silent! %golines -w %")
-    vim.cmd("silent! %gofumpt -w %")
-  end
-})
-
 vim.opt.conceallevel = 1

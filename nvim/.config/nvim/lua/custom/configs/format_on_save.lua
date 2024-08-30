@@ -3,6 +3,8 @@ local formatters = require("format-on-save.formatters")
 
 format_on_save.setup({
   formatter_by_ft = {
+    typescript = formatters.prettierd,
+    typescriptreact = formatters.prettierd,
     go = {
       formatters.shell({
         cmd = {"golines", "-w", "%"},

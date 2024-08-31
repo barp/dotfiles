@@ -42,6 +42,12 @@ lspconfig.tailwindcss.setup({
   },
 })
 
+lspconfig.elixirls.setup({
+  on_attach = on_attach,
+  capabilities = capabilities,
+  cmd = { "/usr/local/bin/elixir-ls/language_server.sh" },
+})
+
 vim.api.nvim_create_augroup('AutoFormatting', {})
 vim.api.nvim_create_autocmd('BufWritePre', {
   pattern = '*.go',

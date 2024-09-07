@@ -4,6 +4,7 @@ local formatters = require("format-on-save.formatters")
 format_on_save.setup({
   formatter_by_ft = {
     html = formatters.lsp,
+    svelte = formatters.lsp,
     typescript = formatters.prettierd,
     typescriptreact = formatters.prettierd,
     go = {

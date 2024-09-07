@@ -20,7 +20,7 @@ end
 lspconfig.html.setup({
   on_attach = on_attach,
   capabilities = capabilities,
-  filetypes = { "html", "templ", "svelte" },
+  filetypes = { "html", "templ" },
 })
 
 lspconfig.htmx.setup({

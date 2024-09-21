@@ -4,7 +4,7 @@ local capabilities = require("plugins.configs.lspconfig").capabilities
 local lspconfig = require "lspconfig"
 
 -- if you just want default config for the servers then put them in a table
-local servers = { "cssls", "tsserver", "clangd", "terraformls", "pyright", "zls", "gopls", "templ", "elmls", "svelte"}
+local servers = { "cssls", "tsserver", "clangd", "terraformls", "pyright", "zls", "templ", "elmls", "svelte"}
 
 for _, lsp in ipairs(servers) do
   lspconfig[lsp].setup {
@@ -16,6 +16,21 @@ end
 -- 
 -- lspconfig.pyright.setup { blabla}
 --
+lspconfig.gopls.setup({
+    on_attach = on_attach,
+    capabilities = capabilities,
+  	settings = {
+    gopls = {
+      annotations = {
+        escape = true,
+      },
+      codelenses = {
+        generate = false,
+        gc_details = true,
+      }
+    },
+	},
+})
 
 lspconfig.html.setup({
   on_attach = on_attach,

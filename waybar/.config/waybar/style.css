@@ -142,3 +142,7 @@ button:hover {
 #power-profiles-daemon.power-saver {
     color: #2ecc71;
 }
+
+#bluetooth.on {
+    color: #2ecc71;
+}

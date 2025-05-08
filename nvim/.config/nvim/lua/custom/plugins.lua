@@ -46,6 +46,21 @@ local plugins = {
     end, -- Override to setup mason-lspconfig
   },
   {
+    'MeanderingProgrammer/render-markdown.nvim',
+    dependencies = { 'nvim-treesitter/nvim-treesitter', 'echasnovski/mini.nvim' }, -- if you use the mini.nvim suite
+    -- dependencies = { 'nvim-treesitter/nvim-treesitter', 'echasnovski/mini.icons' }, -- if you use standalone mini plugins
+    -- dependencies = { 'nvim-treesitter/nvim-treesitter', 'nvim-tree/nvim-web-devicons' }, -- if you prefer nvim-web-devicons
+    ---@module 'render-markdown'
+    config = function()
+      require("render-markdown").setup({
+        file_types = { 'markdown', 'vimwiki', 'codecompanion' }
+      })
+    end,
+    ft = {'markdown', 'vimwiki', 'codecompanion'},
+    ---@type render.md.UserConfig
+    opts = {},
+},
+  {
     "olimorris/codecompanion.nvim",
     config = function()
       require("codecompanion").setup({

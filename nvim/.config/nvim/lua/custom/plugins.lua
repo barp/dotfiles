@@ -74,8 +74,12 @@ local plugins = {
         },
       })
     end,
+    init = function ()
+      require("custom.configs.fidget-spinner"):init()
+    end,
     opts = {},
     dependencies = {
+      "j-hui/fidget.nvim",
       "nvim-lua/plenary.nvim",
       "nvim-treesitter/nvim-treesitter",
     },

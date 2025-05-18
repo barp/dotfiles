@@ -148,7 +148,14 @@ local plugins = {
       local dap = require "dap"
       local ui = require "dapui"
 
-      require("dapui").setup()
+      require("dapui").setup({
+        element_mappings = {
+          stacks = {
+            open = "<CR>",
+            expand = "o",
+          }
+        }
+      })
       require("dap-python").setup("python3")
 
       require("nvim-dap-virtual-text").setup {

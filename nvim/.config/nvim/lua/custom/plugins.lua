@@ -169,8 +169,14 @@ local plugins = {
       }
 
       vim.keymap.set("n", "<leader>db", dap.toggle_breakpoint)
+      vim.keymap.set("n", "<leader>dt", ":lua require('dapui').toggle({})<CR>", {silent=true})
       vim.keymap.set("n", "<leader>dg", dap.run_to_cursor)
-      vim.keymap.set("n", "<leader>dn", ":lua require('dap-python').test_method({config = { justMyCode = false }})<CR>")
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = {"python"},
+        callback = function(ev)
+          vim.api.nvim_buf_set_keymap(0, "n", "<leader>dn", ":lua require('dap-python').test_method({config = { justMyCode = false }})<CR>", {silent=true})
+        end
+      })
 
       vim.keymap.set("n", "<F1>", dap.continue)
       vim.keymap.set("n", "<F2>", dap.step_into)

@@ -14,3 +14,5 @@ autocmd({"BufEnter"}, {
 })
 
 vim.opt.conceallevel = 1
+
+vim.g.augment_workspace_folders = {"~/aironworks/aironworksserver" , "~/aironworks/AironWorksApp-Client/", "~/aironworks/aironworks-testing/", "~/aironworks/aironworks-email-filter"}

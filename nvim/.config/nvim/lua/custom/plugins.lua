@@ -132,6 +132,7 @@ local plugins = {
       require "custom.configs.conform"
     end,
   },
+  { 'augmentcode/augment.vim', lazy=false },
 
   -- To make a plugin not be loaded
   -- {

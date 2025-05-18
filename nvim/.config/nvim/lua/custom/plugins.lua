@@ -157,6 +157,7 @@ local plugins = {
         }
       })
       require("dap-python").setup("python3")
+      require('dap-go').setup()
 
       require("nvim-dap-virtual-text").setup {
         display_callback = function(variable)
@@ -208,6 +209,13 @@ local plugins = {
       end
     end,
   },
+  {
+    "yorickpeterse/nvim-window",
+    keys = {
+      { "<leader>wj", "<cmd>lua require('nvim-window').pick()<cr>", desc = "nvim-window: Jump to window" },
+    },
+    config = true,
+  }
 }
 
 return plugins

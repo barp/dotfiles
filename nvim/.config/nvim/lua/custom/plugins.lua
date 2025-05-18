@@ -177,6 +177,12 @@ local plugins = {
           vim.api.nvim_buf_set_keymap(0, "n", "<leader>dn", ":lua require('dap-python').test_method({config = { justMyCode = false }})<CR>", {silent=true})
         end
       })
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = {"go"},
+        callback = function(ev)
+          vim.api.nvim_buf_set_keymap(0, "n", "<leader>dn", ":lua require('dap-go').debug_test()<CR>", {silent=true})
+        end
+      })
 
       vim.keymap.set("n", "<F1>", dap.continue)
       vim.keymap.set("n", "<F2>", dap.step_into)

@@ -155,7 +155,10 @@ stow_packages() {
   fi
 
   if [ "$DRY" -eq 1 ]; then
-    stow -n -v --no-folding "${pkgs[@]}" 2>&1 | sed 's/^/  /'
+    # Mirror the real invocation exactly (-n simulates, so nothing is adopted).
+    # Without --adopt here, the simulation reports conflicts on every existing
+    # file that the real run would quietly adopt.
+    stow -n -v --adopt --no-folding "${pkgs[@]}" 2>&1 | sed 's/^/  /'
     return 0
   fi
 

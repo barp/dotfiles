@@ -57,6 +57,28 @@ opacity and bar height with no error. `install.sh` deploys themes as real files
 (`cp -aL`) and re-applies the active one. Edit a theme in the repo, then re-run
 `./install.sh`.
 
+## btrfs: copy-on-write
+
+Steam game data and the Monero blockchain are large files rewritten in place,
+which fragments badly under btrfs copy-on-write. `install.sh` sets them up:
+
+| Path | Treatment |
+|---|---|
+| `~/.local/share/Steam/steamapps/common` | NoCOW directory |
+| `~/.local/share/Steam/steamapps/shadercache` | NoCOW directory |
+| `~/.bitmonero` | Own subvolume, NoCOW |
+
+`~/.bitmonero` is a subvolume so snapper/limine never snapshots a
+multi-gigabyte blockchain along with `$HOME`.
+
+**`chattr +C` only affects files created after it is set.** These directories
+must be prepared while empty — run `./install.sh` before starting Steam or
+monerod for the first time. If data is already there, the script says so and
+prints the exact rewrite command; it never moves your data on its own.
+
+Adjust the paths in the `NOCOW_DIRS` / `NOCOW_SUBVOLS` arrays at the top of
+`install.sh`. On a non-btrfs machine the whole step is skipped.
+
 ## Per-host config
 
 `monitors.lua`, `displays.json`, and `environment.d/` describe one machine's

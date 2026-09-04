@@ -17,6 +17,18 @@ cd "$REPO"
 PACKAGES=(omarchy hypr terminals shell tmux tools mpv desktop input backgrounds)
 NVIM_REMOTE="git@github.com:barp/lazyvim-config.git"
 
+# Large files rewritten in place - Steam game data, the Monero blockchain -
+# fragment badly under btrfs copy-on-write, so they live in NoCOW directories.
+# ~/.bitmonero is additionally its own subvolume, which keeps snapper/limine
+# from snapshotting a multi-gigabyte blockchain along with $HOME.
+NOCOW_DIRS=(
+  ".local/share/Steam/steamapps/common"
+  ".local/share/Steam/steamapps/shadercache"
+)
+NOCOW_SUBVOLS=(
+  ".bitmonero"
+)
+
 STOW_ONLY=0; VERIFY_ONLY=0; DRY=0; WITH_MACHINE=0; SKIP_PACKAGES=0
 for a in "$@"; do case "$a" in
   --stow-only)     STOW_ONLY=1 ;;
@@ -54,6 +66,19 @@ verify() {
   n=$(find "$HOME/.config" "$HOME/.local/share" -maxdepth 4 -type l ! -exec test -e {} \; -print 2>/dev/null \
       | grep -c "dotfiles" || true)
   [ "$n" -eq 0 ] && ok "every link into the repo resolves" || bad "$n dangling links into the repo"
+
+  if [ "$(stat -f -c %T "$HOME" 2>/dev/null)" = "btrfs" ]; then
+    local d
+    for d in "${NOCOW_DIRS[@]}" "${NOCOW_SUBVOLS[@]}"; do
+      if [ ! -d "$HOME/$d" ]; then bad "$d missing"
+      elif lsattr -d "$HOME/$d" 2>/dev/null | awk '{print $1}' | grep -q C; then ok "NoCOW set on $d"
+      else bad "$d is NOT NoCOW - run: ./install.sh"; fi
+    done
+    for d in "${NOCOW_SUBVOLS[@]}"; do
+      [ "$(stat -c %i "$HOME/$d" 2>/dev/null)" = "256" ] && ok "$d is its own subvolume" \
+        || bad "$d is not a subvolume - excluded from snapshots requires one"
+    done
+  fi
 
   if have hyprctl && hyprctl version >/dev/null 2>&1; then
     local b e
@@ -173,6 +198,70 @@ if [ "$SKIP_PACKAGES" -eq 0 ]; then
   fi
 else
   step "Installing packages"; echo "  skipped (--skip-packages)"
+fi
+
+# ----------------------------------------------------------- btrfs / cow ----
+# chattr +C only affects files created AFTER it is set, so these directories
+# must be prepared while empty - ideally before Steam or monerod ever runs.
+# Existing files keep copy-on-write forever and need an explicit rewrite.
+cow_stale() {   # any file under $1 missing the NoCOW flag?
+  find "$1" -type f 2>/dev/null | head -200 | while IFS= read -r f; do
+    lsattr "$f" 2>/dev/null | awk '{print $1}' | grep -q C || { echo x; break; }
+  done | grep -qc x
+}
+
+nocow_dir() {   # nocow_dir <path-relative-to-$HOME>
+  local rel="$1" abs="$HOME/$1"
+  if [ "$DRY" -eq 1 ]; then
+    [ -d "$abs" ] && echo "  would set NoCOW on existing $rel" || echo "  would create $rel with NoCOW"
+    return 0
+  fi
+  mkdir -p "$abs" || { echo "  could not create $rel"; return 1; }
+  if ! chattr +C "$abs" 2>/dev/null; then
+    echo "  could not set NoCOW on $rel"; return 1
+  fi
+  if cow_stale "$abs"; then
+    echo "  set NoCOW on $rel - WARNING: existing files predate it and stay CoW"
+    echo "      to rewrite them:  mv '$abs'{,.cow} && mkdir '$abs' && chattr +C '$abs' \\"
+    echo "                        && cp -a --reflink=never '$abs.cow/.' '$abs/' && rm -rf '$abs.cow'"
+  else
+    echo "  NoCOW  $rel"
+  fi
+}
+
+nocow_subvol() {   # nocow_subvol <path-relative-to-$HOME>
+  local rel="$1" abs="$HOME/$1"
+  if [ "$DRY" -eq 1 ]; then
+    [ -e "$abs" ] && echo "  would ensure NoCOW on existing $rel" || echo "  would create subvolume $rel with NoCOW"
+    return 0
+  fi
+  if [ ! -e "$abs" ]; then
+    btrfs subvolume create "$abs" >/dev/null 2>&1 || { echo "  could not create subvolume $rel"; return 1; }
+    chattr +C "$abs" 2>/dev/null
+    echo "  subvolume + NoCOW  $rel"
+    return 0
+  fi
+  if [ "$(stat -c %i "$abs" 2>/dev/null)" = "256" ]; then
+    chattr +C "$abs" 2>/dev/null
+    cow_stale "$abs" \
+      && echo "  subvolume $rel - WARNING: existing files predate NoCOW and stay CoW" \
+      || echo "  subvolume + NoCOW  $rel"
+  else
+    echo "  $rel exists as a plain directory, not a subvolume."
+    echo "      to convert (monerod must be stopped, needs root to delete the old dir):"
+    echo "        mv '$abs' '$abs.old' && btrfs subvolume create '$abs' && chattr +C '$abs' \\"
+    echo "          && cp -a --reflink=never '$abs.old/.' '$abs/' && sudo rm -rf '$abs.old'"
+  fi
+}
+
+step "btrfs storage layout"
+if [ "$(stat -f -c %T "$HOME" 2>/dev/null)" != "btrfs" ]; then
+  echo "  \$HOME is not btrfs; nothing to do"
+elif ! have chattr; then
+  echo "  chattr not available (e2fsprogs); skipping"
+else
+  for d in "${NOCOW_DIRS[@]}";    do nocow_dir "$d";    done
+  for d in "${NOCOW_SUBVOLS[@]}"; do nocow_subvol "$d"; done
 fi
 
 # ------------------------------------------------------------------- zsh ----

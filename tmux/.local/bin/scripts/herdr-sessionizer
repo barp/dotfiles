@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Herdr equivalent of tmux-sessionizer: pick a project dir, then focus an
+# existing workspace with that name or create a new one rooted there.
+
+set -uo pipefail
+
+if [[ $# -eq 1 ]]; then
+    selected=$1
+else
+    selected=$(find ~/aironworks ~/phishing-assesment ~/personal ~/projects \
+        -mindepth 1 -maxdepth 1 -type d 2>/dev/null | fzf)
+fi
+
+[[ -z ${selected:-} ]] && exit 0
+
+selected_name=$(basename "$selected" | tr . _)
+
+# Reuse the workspace if one already carries this label.
+existing=$(herdr api snapshot 2>/dev/null | jq -r --arg name "$selected_name" '
+    [.. | objects | select(has("workspace_id") and has("label"))
+        | select(.label == $name) | .workspace_id] | first // empty
+')
+
+if [[ -n $existing ]]; then
+    herdr workspace focus "$existing"
+else
+    herdr workspace create --cwd "$selected" --label "$selected_name" --focus
+fi

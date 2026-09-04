@@ -1,0 +1,10 @@
+profile {
+    output LVDS-1 disable
+    output "MEG 342C OLED" mode  3440x1440 position 0,0
+}
+
+profile {
+    output LVDS-1 enable scale 2
+  }
+
+

@@ -1,0 +1,10 @@
+[bar]
+# A taller, softer strip that lets the wallpaper show through.
+background       = "#0f1526"
+background-alpha = 0.86
+text             = "#e4e9f3"
+# Attention colour is the Noctchill blue rather than alarm red.
+active           = "#5b8def"
+scale-with-font  = true
+size-horizontal  = 32
+size-vertical    = 34

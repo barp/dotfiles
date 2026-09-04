@@ -1,0 +1,11 @@
+# Machine-generated state that must never be versioned
+.uuid
+*.log
+*.bak
+*.bak.*
+*.sample
+node_modules/
+.plugins.lock
+session.json
+.DS_Store
+.sync-stage.*

@@ -1,0 +1,29 @@
+[controls]
+# No hairline borders on idle chrome; state reads through soft fills only.
+normal-color        = "#f2f5fa"
+normal-fill-alpha   = 0.06
+normal-border       = "#f2f5fa"
+normal-border-width = 0
+normal-border-alpha = 0.0
+
+hover-cursor-color        = "#f2f5fa"
+hover-cursor-fill-alpha   = 0.12
+hover-cursor-border       = "#5b8def"
+hover-cursor-border-width = 0
+hover-cursor-border-alpha = 0.0
+
+# Keyboard focus still gets a visible ring, in the accent.
+focus-color        = "#f2f5fa"
+focus-fill-alpha   = 0.12
+focus-border       = "#5b8def"
+focus-border-width = 1
+focus-border-alpha = 0.6
+
+selected-color        = "#5b8def"
+selected-fill-alpha   = 0.22
+selected-border       = "#5b8def"
+selected-border-width = 0
+selected-border-alpha = 1.0
+
+pressed-fill-alpha   = 0.28
+selection-fill-alpha = 0.35

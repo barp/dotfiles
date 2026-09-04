@@ -1,0 +1,7 @@
+[spacing]
+# Roomier padding everywhere: unhurried, nothing crammed.
+scale = 1.15
+scale-with-font = true
+panel-padding = 22
+popup-padding = 18
+row-gap = 10

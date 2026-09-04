@@ -1,0 +1,4 @@
+[hyprland]
+# Noctchill blue into a paler sky blue: the gradient used by popup and lock borders.
+active-border            = "rgba(5b8defff) rgba(8fb2ffff) 45deg"
+active-border-foreground = "#3a4a6e"

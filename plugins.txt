@@ -1,0 +1,4 @@
+https://github.com/nightdevil00/better.displays.git
+https://github.com/gmaxxxie/omarchy-fcitx5-theme.git
+https://github.com/Harshith292002/omarchy-system-monitor.git
+https://github.com/jankeesvw/omarchy-notification-center.git

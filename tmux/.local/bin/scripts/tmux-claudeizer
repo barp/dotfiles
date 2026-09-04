@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Like tmux-sessionizer, but the session's first window runs Claude Code
+# in the selected folder instead of a plain shell.
+
+# Command to launch. Override with e.g. CLAUDE_CMD="claude --worktree feature-x"
+CLAUDE_CMD=${CLAUDE_CMD:-claude --worktree}
+
+if [[ $# -eq 1 ]]; then
+    selected=$1
+else
+    selected=$(find ~/aironworks ~/phishing-assesment ~/personal ~/projects -mindepth 1 -maxdepth 1 -type d | fzf)
+fi
+
+if [[ -z $selected ]]; then
+    exit 0
+fi
+
+selected_name="$(basename "$selected" | tr . _)-claude"
+
+# --worktree only works inside a git repo; fall back to a plain session elsewhere
+if ! git -C "$selected" rev-parse --is-inside-work-tree &> /dev/null; then
+    CLAUDE_CMD=${CLAUDE_CMD%% --worktree*}
+fi
+tmux_running=$(pgrep tmux)
+
+if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
+    tmux new-session -s "$selected_name" -c "$selected" -n claude "$CLAUDE_CMD"
+    exit 0
+fi
+
+if ! tmux has-session -t="$selected_name" 2> /dev/null; then
+    tmux new-session -ds "$selected_name" -c "$selected" -n claude "$CLAUDE_CMD"
+fi
+
+tmux switch-client -t "$selected_name"

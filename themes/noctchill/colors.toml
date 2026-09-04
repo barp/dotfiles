@@ -1,0 +1,33 @@
+# Noctchill — unit colours: deep night blue and white.
+# (283 Production's Noctchill: Toru, Madoka, Koito, Natsuha.)
+mode = "dark"
+
+accent = "#5b8def"
+selection = "#243a66"
+muted = "#6d7a99"
+
+background = "#0f1526"
+dark_background = "#0b101d"
+darker_background = "#070b15"
+lighter_background = "#1a2238"
+
+foreground = "#f2f5fa"
+dark_foreground = "#8e9ab8"
+light_foreground = "#e4e9f3"
+bright_foreground = "#ffffff"
+
+red = "#e0697a"
+yellow = "#e6c887"
+orange = "#e8a06a"
+green = "#7fc9a4"
+cyan = "#7fcbe0"
+blue = "#5b8def"
+magenta = "#b39ae8"
+brown = "#3a4a6e"
+
+bright_red = "#f08a98"
+bright_yellow = "#f3dba6"
+bright_green = "#a2dfc0"
+bright_cyan = "#a6e0ee"
+bright_blue = "#8fb2ff"
+bright_magenta = "#cdb9f5"

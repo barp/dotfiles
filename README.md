@@ -12,15 +12,21 @@ cd ~/.dotfiles
 ./install.sh
 ```
 
-`install.sh` installs packages, oh-my-zsh, tpm, and Neovim, stows every package,
-re-adds the Omarchy shell plugins, and places wallpapers.
-
-To stow without the rest:
+`install.sh` is the only install script. It installs packages, oh-my-zsh and its
+plugins, tpm, and Neovim; links every stow package; deploys themes; re-adds the
+Omarchy shell plugins; places wallpapers; re-applies the theme and restarts the
+shell; then verifies the result.
 
 ```bash
-./scripts/stow-all.sh --dry-run   # show what would be linked
-./scripts/stow-all.sh             # link it
+./install.sh                  # full install
+./install.sh --dry-run        # show what would happen, change nothing
+./install.sh --verify         # health check only
+./install.sh --stow-only      # re-link packages only
+./install.sh --with-machine   # also apply machine-<hostname>
+./install.sh --skip-packages  # skip the pacman/AUR step
 ```
+
+It is idempotent - re-run it any time.
 
 Stow uses `--adopt`, so a machine that already has Omarchy's default configs in
 place converts cleanly: the defaults are pulled in, then immediately reset to
@@ -47,9 +53,9 @@ and the script refuses to run otherwise.
 copies a theme directory into `~/.local/state/omarchy/current/theme/` preserving
 symlinks, and stow's links are relative: they resolve from `~/.config` but
 dangle from `~/.local/state`. The shell then falls back to default colors,
-opacity and bar height with no error. `scripts/install-theme.sh` deploys themes
-as real files (`cp -aL`) and re-applies the active one. Edit a theme in the repo,
-then run that script.
+opacity and bar height with no error. `install.sh` deploys themes as real files
+(`cp -aL`) and re-applies the active one. Edit a theme in the repo, then re-run
+`./install.sh`.
 
 ## Per-host config
 
@@ -57,11 +63,20 @@ then run that script.
 hardware, so they live in `machine-<hostname>/` and are skipped unless asked for:
 
 ```bash
-./scripts/stow-all.sh --with-machine
+./install.sh --with-machine
 ```
 
 On a new machine, configure displays natively and commit the result as a new
 `machine-<hostname>/` package.
+
+## Scripts
+
+There are two, by design:
+
+| Script | Direction |
+|---|---|
+| `install.sh` | repo → machine (plus `--verify`) |
+| `scripts/sync-from-system.sh` | machine → repo |
 
 ## Keeping the repo current
 
@@ -77,10 +92,10 @@ git commit -am "sync"
 The sync script also regenerates `packages.arch.txt`, `packages.aur.txt`,
 `plugins.txt`, and `backgrounds.map`.
 
-Always follow a sync or stow with:
+Always follow a sync with:
 
 ```bash
-./scripts/verify.sh
+./install.sh --verify
 ```
 
 It checks for self-referential symlinks, dangling links into the repo, Hyprland
@@ -100,7 +115,7 @@ correct. Recovery is `omarchy theme set <name> && omarchy restart shell`.
 - **Generated state.** `node_modules`, `*.log`, `*.bak*`, `session.json`,
   `.plugins.lock`, and `*.sample` are filtered out.
 - **Neovim.** Lives at [barp/lazyvim-config](https://github.com/barp/lazyvim-config)
-  and is cloned by `scripts/install-nvim.sh`.
+  and is cloned by `install.sh`.
 - **`~/.local/share/applications`.** Only the Omarchy web apps
   (`Exec=omarchy-launch-webapp`) are kept; the rest is written by package
   installers and Steam. Their `Icon=` lines hardcode `/home/bar/`, so a
@@ -111,7 +126,7 @@ correct. Recovery is `omarchy theme set <name> && omarchy restart shell`.
 Images are stored exactly once. An image shipped inside a theme stays there —
 Omarchy themes must be self-contained — and the `backgrounds` package holds only
 what no theme provides. `backgrounds.map` records the layout and
-`scripts/install-backgrounds.sh` replays it into
+`install.sh` replays it into
 `~/.config/omarchy/backgrounds/`.
 
 ## History

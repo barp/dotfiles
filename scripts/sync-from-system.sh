@@ -98,7 +98,7 @@ copy omarchy \
 # --- Custom themes: repo-root themes/, NOT a stow package. `omarchy theme set`
 #     copies a theme dir preserving symlinks, and stow's relative links dangle
 #     from ~/.local/state/omarchy/current/theme/ - the shell then falls back to
-#     default colors, opacity and bar height. Deployed by install-theme.sh. ---
+#     default colors, opacity and bar height. Deployed by install.sh. ---
 for t in "$HOME"/.config/omarchy/themes/*/; do
   [ -d "$t" ] || continue
   name="$(basename "$t")"
@@ -110,7 +110,7 @@ for t in "$HOME"/.config/omarchy/themes/*/; do
 done
 
 # Shell plugins: only the local (non-git) clones travel in the repo. Git-managed
-# ones are recorded as URLs and re-added by scripts/install-plugins.sh.
+# ones are recorded as URLs and re-added by install.sh.
 PLUGDEST="$REPO/omarchy/.config/omarchy/plugins"
 ptmp="$(mktemp -d "$STAGE_ROOT/XXXXXX")"
 : > "$REPO/plugins.txt"

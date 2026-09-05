@@ -101,6 +101,18 @@ verify() {
     done
   fi
 
+  # classicui.conf names the candidate-box theme, but nothing fails loudly when
+  # that theme was never generated - fcitx5 just falls back to its default
+  # panel, so the input box quietly stops matching the system theme.
+  local cui="$HOME/.config/fcitx5/conf/classicui.conf" fthe
+  fthe=$(sed -nE 's/^Theme=(.+)$/\1/p' "$cui" 2>/dev/null | head -1)
+  case "$fthe" in
+    omarchy-*)
+      [ -f "$HOME/.local/share/fcitx5/themes/$fthe/theme.conf" ] \
+        && ok "fcitx5 theme $fthe generated" \
+        || bad "fcitx5 theme $fthe never generated - run: omarchy-hook theme-set" ;;
+  esac
+
   if have hyprctl && hyprctl version >/dev/null 2>&1; then
     local b e
     b=$(hyprctl binds 2>/dev/null | grep -c '^bind')

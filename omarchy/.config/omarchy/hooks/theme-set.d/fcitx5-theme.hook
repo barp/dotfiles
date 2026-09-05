@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -e
+
+# Regenerate the fcitx5 candidate-box theme for the theme just applied.
+#
+# The gmaxxxie.fcitx5-theme plugin normally does this from the shell, but its
+# Service.qml only runs while Quickshell is up - a headless theme set (SSH, a
+# script, install.sh itself) leaves classicui.conf pointing at a theme that was
+# never generated, and fcitx5 silently falls back to its default panel.
+generator="$HOME/.config/omarchy/plugins/gmaxxxie.fcitx5-theme/fcitx5-classicui-theme.sh"
+[[ -x $generator ]] || exit 0
+
+bash "$generator" "${1:-current}" --quiet

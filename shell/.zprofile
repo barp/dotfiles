@@ -1,4 +1,5 @@
-. "$HOME/.local/share/../bin/env"
+# uv's installer writes this; it only prepends ~/.local/bin, which .zshrc does too.
+[ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
 
 export ANDROID_HOME=$HOME/Android/Sdk
 export ANDROID_SDK_ROOT=$ANDROID_HOME

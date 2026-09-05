@@ -269,8 +269,22 @@ fi
 
 # ------------------------------------------------------------------- zsh ----
 step "Setting up zsh"
-if [ -d "$HOME/.oh-my-zsh" ]; then
+# The plugin clones below create ~/.oh-my-zsh/custom, so the directory
+# existing is not proof the core is there - test for the core file itself.
+if [ -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
   echo "  oh-my-zsh already installed"
+elif [ -d "$HOME/.oh-my-zsh" ]; then
+  # Directory present but no core: an earlier run aborted, almost always
+  # because zsh was not installed yet. The upstream installer refuses to
+  # write into an existing directory, so fetch the core in place. Nothing
+  # under custom/ is tracked by that repo, so the cloned plugins and
+  # themes survive the reset.
+  echo "  repairing partial oh-my-zsh install"
+  run git -C "$HOME/.oh-my-zsh" init -q
+  git -C "$HOME/.oh-my-zsh" remote get-url origin >/dev/null 2>&1 \
+    || run git -C "$HOME/.oh-my-zsh" remote add origin https://github.com/ohmyzsh/ohmyzsh.git
+  run git -C "$HOME/.oh-my-zsh" fetch -q --depth=1 origin master
+  run git -C "$HOME/.oh-my-zsh" reset -q --hard FETCH_HEAD
 else
   # --unattended: don't chsh and don't drop into a zsh shell mid-install.
   run sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended

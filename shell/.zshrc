@@ -194,7 +194,8 @@ export NVM_DIR="$HOME/.nvm"
 #sudo /etc/init.d/dbus start &> /dev/null
 
 source $HOME/.zprofile
-. "/home/bar/.deno/env"
+# deno's install script only; the Arch deno package needs no env file.
+[ -f "$HOME/.deno/env" ] && . "$HOME/.deno/env"
 
 # Added by CodeRabbit CLI installer
 export PATH="/home/bar/.local/bin:$PATH"

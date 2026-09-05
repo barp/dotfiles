@@ -31,6 +31,7 @@ export ANDROID_AVD_HOME=$HOME/.config/.android/avd/
 export PATH=$ANDROID_HOME/emulator:$PATH
 export PATH=$ANDROID_HOME/platform-tools:$PATH
 export PATH=$ANDROID_HOME/cmdline-tools/latest/bin/:$PATH
-. "$HOME/.cargo/env"
-. "/home/bar/.deno/env"
+# rustup / deno install-script only; the Arch packages need no env file.
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+[ -f "$HOME/.deno/env" ] && . "$HOME/.deno/env"
 source /home/bar/.local/share/bash-completion/completions/deno.bash

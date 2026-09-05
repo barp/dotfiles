@@ -7,7 +7,6 @@ envycontrol
 flux-bin
 google-chrome
 google-cloud-cli
-greetd-dms-greeter-git
 java-20-jdk
 katrain
 lib32-wivrn-server

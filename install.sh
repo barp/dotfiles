@@ -189,15 +189,34 @@ if [ "$SKIP_PACKAGES" -eq 0 ]; then
   helper=""
   have yay && helper=yay
   [ -z "$helper" ] && have paru && helper=paru
+  # Split the list by source instead of handing all of it to the AUR helper.
+  # yay and paru abort the whole run when a single AUR package fails to
+  # build, which silently leaves every repo package uninstalled too.
+  # sort -u here so the comm stays correct even if a list is edited out of
+  # order - comm reads unsorted input as garbage without failing.
+  repo_pkgs=$(comm -23 <(sort -u packages.arch.txt) <(sort -u packages.aur.txt))
+  aur_pkgs=$(comm -12 <(sort -u packages.arch.txt) <(sort -u packages.aur.txt))
+
+  # One name that no longer exists aborts the entire pacman transaction,
+  # so drop unknown names with a warning rather than lose the batch.
+  valid="" unknown=""
+  for p in $repo_pkgs; do
+    if pacman -Si "$p" >/dev/null 2>&1; then valid="$valid $p"; else unknown="$unknown $p"; fi
+  done
+  [ -n "$unknown" ] && echo "  not in any configured repo, skipped:$unknown"
+  # shellcheck disable=SC2086
+  [ -n "$valid" ] && run sudo pacman -S --noconfirm --needed $valid
+
   if [ -n "$helper" ]; then
-    # shellcheck disable=SC2046
-    run "$helper" -S --noconfirm --needed $(cat packages.arch.txt)
+    # One at a time: a package that fails to build must not stop the rest.
+    aur_failed=""
+    for p in $aur_pkgs; do
+      pacman -Qq "$p" >/dev/null 2>&1 && continue
+      run "$helper" -S --noconfirm --needed "$p" || aur_failed="$aur_failed $p"
+    done
+    [ -n "$aur_failed" ] && echo "  AUR builds failed:$aur_failed" || echo "  all AUR packages present"
   else
-    echo "  no AUR helper (yay/paru); installing repo packages only"
-    echo "  packages.aur.txt will need one of them"
-    # shellcheck disable=SC2046
-    run sudo pacman -S --noconfirm --needed \
-      $(comm -23 <(sort packages.arch.txt) <(sort packages.aur.txt))
+    echo "  no AUR helper (yay/paru); skipped $(echo $aur_pkgs | wc -w) AUR packages"
   fi
 else
   step "Installing packages"; echo "  skipped (--skip-packages)"

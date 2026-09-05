@@ -31,14 +31,10 @@ cmake3
 cups
 cups-filters
 cups-pk-helper
-cursor-bin
 ddcutil
 discord-qt
 dive
 dmidecode
-dms-shell
-dms-shell-hyprland
-dms-shell-niri
 dnsmasq
 docker
 docker-buildx
@@ -72,8 +68,8 @@ fzf
 gdb
 gemini-cli
 git
-git-lfs
 github-cli
+git-lfs
 gnome-disk-utility
 gnome-keyring
 gnome-themes-extra
@@ -81,7 +77,6 @@ google-chrome
 google-cloud-cli
 gpu-screen-recorder
 graphviz
-greetd-dms-greeter-git
 grim
 gst-plugin-pipewire
 guestfs-tools
@@ -158,8 +153,8 @@ nvidia-open-dkms
 nvidia-prime
 nvidia-prime-rtd3pm
 nvidia-utils
-obs-studio
 obsidian
+obs-studio
 omacalc
 omacut
 omarchy
@@ -247,7 +242,6 @@ valkey
 veracrypt-git
 virt-manager
 virt-viewer
-visual-studio-code-bin
 vulkan-radeon
 wget
 whois
@@ -256,8 +250,8 @@ wireless-regdb
 wireplumber
 wivrn-dashboard
 wivrn-server
-wl-clip-persist
 wl-clipboard
+wl-clip-persist
 woff2-font-awesome
 wtype
 xclip

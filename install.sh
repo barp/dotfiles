@@ -80,6 +80,27 @@ verify() {
     done
   fi
 
+  # Every input method named in the fcitx5 profile must actually be available.
+  # fcitx5 silently drops one whose engine is missing, then writes the pruned
+  # profile back through the stow symlink into this repo - which is how
+  # Japanese and Hebrew disappear without an error anywhere.
+  local prof="$HOME/.config/fcitx5/profile" im layout
+  if [ -r "$prof" ]; then
+    for im in $(sed -n '/^\[Groups\/0\/Items\//,/^$/s/^Name=//p' "$prof"); do
+      case "$im" in
+        keyboard-*)
+          layout="${im#keyboard-}"
+          grep -q "<name>$layout</name>" /usr/share/X11/xkb/rules/evdev.xml 2>/dev/null \
+            && ok "input method $im available" \
+            || bad "xkb layout $layout missing - needs xkeyboard-config" ;;
+        *)
+          [ -f "/usr/share/fcitx5/inputmethod/$im.conf" ] \
+            && ok "input method $im available" \
+            || bad "fcitx5 engine $im NOT installed - fcitx5 will drop it from the profile" ;;
+      esac
+    done
+  fi
+
   if have hyprctl && hyprctl version >/dev/null 2>&1; then
     local b e
     b=$(hyprctl binds 2>/dev/null | grep -c '^bind')
@@ -164,6 +185,18 @@ stow_packages() {
 
   # --adopt pulls conflicting real files into the repo, so the tree must be
   # clean for `git checkout` to reliably discard them afterwards.
+  # fcitx5 rewrites ~/.config/fcitx5/profile from memory when it exits, and
+  # that path is a stow symlink into this repo - so a running instance
+  # overwrites the profile moments after stow links it, silently dropping any
+  # input method whose engine was missing when fcitx5 started. Stop it first
+  # and let that final write land before the dirty check reads the tree.
+  fcitx_was_running=0
+  if systemctl --user is-active --quiet omarchy-fcitx5.service 2>/dev/null; then
+    fcitx_was_running=1
+    systemctl --user stop omarchy-fcitx5.service
+    echo "  stopped fcitx5 (it rewrites its profile on exit)"
+  fi
+
   if [ -n "$(git status --porcelain)" ]; then
     echo "  error: working tree is dirty. Commit or stash first - stowing uses" >&2
     echo "         'git checkout' to discard files adopted from \$HOME." >&2
@@ -176,6 +209,9 @@ stow_packages() {
   # `omarchy theme set` would then write generated files into this repo.
   stow --adopt -v --no-folding "${pkgs[@]}" 2>&1 | sed 's/^/  /'
   git checkout -- .   # throw away anything adopted from $HOME
+  [ "$fcitx_was_running" -eq 1 ] \
+    && systemctl --user start omarchy-fcitx5.service \
+    && echo "  restarted fcitx5 against the linked profile"
   echo "  stowed: ${pkgs[*]}"
   [ "$WITH_MACHINE" -eq 0 ] && echo "  machine-specific config (monitors, displays) NOT applied; use --with-machine"
   return 0

@@ -101,6 +101,19 @@ verify() {
     done
   fi
 
+  # A compat tool that failed to download leaves no trace anywhere - Steam just
+  # silently stops offering it, and a game pinned to it falls back to default.
+  if [ -s "$REPO/proton.txt" ]; then
+    while IFS= read -r url; do
+      [ -n "$url" ] || continue
+      case "$url" in \#*) continue ;; esac
+      im="$(basename "$url" .tar.xz)"
+      [ -f "$HOME/.local/share/Steam/compatibilitytools.d/$im/compatibilitytool.vdf" ] \
+        && ok "compat tool $im installed" \
+        || bad "compat tool $im missing - run: ./install.sh"
+    done < "$REPO/proton.txt"
+  fi
+
   # Nothing else notices a package that never installed - a failed AUR build
   # or an aborted transaction just leaves it absent, and whatever depended on
   # it degrades quietly somewhere else entirely.
@@ -439,6 +452,39 @@ if [ -s plugins.txt ] && have omarchy; then
   done < plugins.txt
 else
   echo "  nothing to add"
+fi
+
+# ---------------------------------------------------------------- proton ----
+# Steam compatibility tools ship as self-contained tarballs that bundle their
+# own runtime. The AUR packages for them pull a large lib32 build tree - and
+# lib32-mpg123 makedepends on lib32-jack2, which drags in jack2 and conflicts
+# with pipewire-jack - so take the upstream release directly instead.
+step "Installing Steam compatibility tools"
+COMPAT_DIR="$HOME/.local/share/Steam/compatibilitytools.d"
+if [ -s proton.txt ]; then
+  [ "$DRY" -eq 1 ] || mkdir -p "$COMPAT_DIR"
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    case "$url" in \#*) continue ;; esac
+    name="$(basename "$url" .tar.xz)"
+    if [ -d "$COMPAT_DIR/$name" ]; then
+      echo "  present  $name"
+    elif [ "$DRY" -eq 1 ]; then
+      echo "  would fetch: $name"
+    else
+      echo "  fetching $name"
+      tmp="$(mktemp -d)"
+      if curl -fsSL -o "$tmp/tool.tar.xz" "$url" \
+         && tar -xJf "$tmp/tool.tar.xz" -C "$COMPAT_DIR"; then
+        echo "    installed $name"
+      else
+        echo "    failed: $url"
+      fi
+      rm -rf "$tmp"
+    fi
+  done < proton.txt
+else
+  echo "  nothing to install"
 fi
 
 # ------------------------------------------------------------ backgrounds ----

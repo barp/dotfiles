@@ -43,7 +43,6 @@ dosfstools
 dotnet-runtime
 dotnet-sdk
 dua-cli
-dwproton-bin
 edk2-ovmf
 efibootmgr
 egl-wayland

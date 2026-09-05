@@ -3,7 +3,6 @@ aws-cli-bin
 battop
 cmake3
 discord-qt
-dwproton-bin
 envycontrol
 flux-bin
 google-chrome

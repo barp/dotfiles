@@ -101,6 +101,15 @@ verify() {
     done
   fi
 
+  # Nothing else notices a package that never installed - a failed AUR build
+  # or an aborted transaction just leaves it absent, and whatever depended on
+  # it degrades quietly somewhere else entirely.
+  n=$(while IFS= read -r p; do
+        [ -n "$p" ] && ! pacman -Qq "$p" >/dev/null 2>&1 && echo x
+      done < "$REPO/packages.arch.txt" | wc -l)
+  [ "$n" -eq 0 ] && ok "every manifest package installed" \
+    || bad "$n manifest packages not installed - run: ./install.sh"
+
   # classicui.conf names the candidate-box theme, but nothing fails loudly when
   # that theme was never generated - fcitx5 just falls back to its default
   # panel, so the input box quietly stops matching the system theme.

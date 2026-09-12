@@ -4,7 +4,7 @@
     "layout": {
       "left": [
         {
-          "id": "omarchy.menu"
+          "id": "bar.menu"
         },
         {
           "id": "bar.workspaces"
@@ -89,8 +89,5 @@
       "id": "gmaxxxie.fcitx5-theme"
     }
   ],
-  "version": 1,
-  "cloneSourceRestores": [
-    "bar.menu"
-  ]
+  "version": 1
 }

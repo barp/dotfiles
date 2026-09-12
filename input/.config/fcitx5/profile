@@ -10,19 +10,19 @@ DefaultIM=keyboard-il
 # Name
 Name=keyboard-us
 # Layout
-Layout=
+# Layout=
 
 [Groups/0/Items/1]
 # Name
 Name=mozc
 # Layout
-Layout=
+# Layout=
 
 [Groups/0/Items/2]
 # Name
 Name=keyboard-il
 # Layout
-Layout=
+# Layout=
 
 [GroupOrder]
 0=Default

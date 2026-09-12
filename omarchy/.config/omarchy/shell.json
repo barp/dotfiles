@@ -4,7 +4,7 @@
     "layout": {
       "left": [
         {
-          "id": "bar.menu"
+          "id": "omarchy.menu"
         },
         {
           "id": "bar.workspaces"
@@ -18,7 +18,7 @@
           "id": "omarchy.clock",
           "format": "HH:mm",
           "formatAlt": "ddd d MMM",
-          "verticalFormat": "HH\n—\nmm"
+          "verticalFormat": "HH\n\u2014\nmm"
         },
         {
           "id": "omarchy.weather"
@@ -90,9 +90,6 @@
     }
   ],
   "version": 1,
-  "disabledPlugins": [
-    "omarchy.menu"
-  ],
   "cloneSourceRestores": [
     "bar.menu"
   ]

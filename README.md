@@ -91,6 +91,30 @@ over the versioned config and is never committed:
 { "thermalright": { "rotate": 180 } }
 ```
 
+With `"stats": true` a panel also carries a CPU/GPU readout along the bottom -
+temperature, load bar and percentage - redrawn every keepalive tick. CPU
+temperature comes from `k10temp`'s Tctl (looked up by driver name, since hwmon
+numbering is not stable across boots) and load from `/proc/stat` deltas; the
+GPU figures come from `nvidia-smi`, not hwmon, because the `amdgpu` hwmon on
+this board is the CPU's integrated graphics rather than the card driving the
+display. A sensor that cannot be read draws a dash instead of failing.
+
+Text size is set by `"stats_font"`, as a fraction of the panel's height so one
+setting holds across panels of different resolutions:
+
+```json
+"stats_font": { "label": 0.105, "value": 0.135, "percent": 0.060 }
+```
+
+`label` is the `CPU`/`GPU` heading, `value` the temperature, `percent` the load
+figure. The backdrop's height is derived from these rather than fixed, so
+raising a size grows the gradient with it instead of pushing the readout off
+the bottom of the panel. Any key may be omitted to keep its default.
+
+The overlay is drawn before the panel rotation is applied, so it stays upright
+on an upside-down panel. Re-compositing costs about 9 ms per tick: the fitted
+background is cached decoded, and only the overlay and JPEG encode repeat.
+
 | Command | |
 |---|---|
 | `omarchy-lcd-bg --probe` | identify the panels and their geometry |

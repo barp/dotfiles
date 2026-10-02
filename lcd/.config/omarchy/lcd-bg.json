@@ -4,17 +4,22 @@
   "quality": 88,
   "shuffle": true,
   "avoid_desktop_background": true,
-
   "thermaltake": {
     "enabled": true,
     "brightness": 100,
-    "rotate": 0
+    "rotate": 0,
+    "stats": false
   },
-
   "thermalright": {
     "enabled": true,
     "resolution": null,
     "circle": false,
-    "rotate": 0
+    "rotate": 0,
+    "stats": true,
+    "stats_font": {
+      "label": 0.120,
+      "value": 0.135,
+      "percent": 0.06
+    }
   }
 }

@@ -27,6 +27,7 @@ import os
 import random
 import select
 import signal
+import subprocess
 import sys
 import time
 
@@ -45,9 +46,10 @@ DEFAULTS = {
     "quality": 88,          # JPEG quality
     "shuffle": True,        # random order vs. sorted order
     "avoid_desktop_background": True,   # skip whatever the desktop is wearing
-    "thermaltake": {"enabled": True, "brightness": 100, "rotate": 0},
+    "thermaltake": {"enabled": True, "brightness": 100, "rotate": 0,
+                    "stats": False, "stats_font": None},
     "thermalright": {"enabled": True, "resolution": None, "circle": False,
-                     "rotate": 0},
+                     "rotate": 0, "stats": False, "stats_font": None},
 }
 
 
@@ -126,70 +128,250 @@ def backgrounds(exclude=None):
 
 
 # -- image preparation ------------------------------------------------------
-def render(path, size, circle=False, rotate=0, quality=88):
-    """Open an image and return baseline JPEG bytes of exactly `size`.
+# -- sensors ----------------------------------------------------------------
+class Telemetry:
+    """CPU and GPU temperature and utilisation.
 
-    Wallpapers rarely share the panel's aspect ratio, so the image is scaled to
-    cover and centre-cropped - letterboxing a 2:1 panel with black bars wastes
-    most of it."""
+    Every reading is best-effort: a missing sensor yields None and the panel
+    draws a dash rather than the daemon failing. Readings are cached for
+    `interval` seconds because nvidia-smi is a process spawn, not a file read."""
+
+    def __init__(self, interval=2.0):
+        self.interval = interval
+        self._at = 0.0
+        self._cache = {}
+        self._cpu_prev = self._read_proc_stat()
+
+    # CPU temperature: k10temp's Tctl. hwmon numbering is not stable across
+    # boots, so the sensor is found by driver name, never by hwmonN.
+    @staticmethod
+    def _cpu_temp():
+        for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+            try:
+                if open(os.path.join(d, "name")).read().strip() != "k10temp":
+                    continue
+                for probe in glob.glob(os.path.join(d, "temp*_input")):
+                    label = probe.replace("_input", "_label")
+                    try:
+                        if open(label).read().strip() == "Tctl":
+                            return int(open(probe).read()) / 1000.0
+                    except OSError:
+                        continue
+                first = sorted(glob.glob(os.path.join(d, "temp*_input")))
+                if first:
+                    return int(open(first[0]).read()) / 1000.0
+            except (OSError, ValueError):
+                continue
+        return None
+
+    @staticmethod
+    def _read_proc_stat():
+        try:
+            with open("/proc/stat") as fh:
+                parts = [int(v) for v in fh.readline().split()[1:]]
+        except (OSError, ValueError, IndexError):
+            return None
+        if len(parts) < 5:
+            return None
+        idle = parts[3] + parts[4]          # idle + iowait
+        return sum(parts), idle
+
+    def _cpu_use(self):
+        now = self._read_proc_stat()
+        if now is None or self._cpu_prev is None:
+            self._cpu_prev = now
+            return None
+        total_d = now[0] - self._cpu_prev[0]
+        idle_d = now[1] - self._cpu_prev[1]
+        self._cpu_prev = now
+        if total_d <= 0:
+            return None
+        return max(0.0, min(100.0, 100.0 * (total_d - idle_d) / total_d))
+
+    @staticmethod
+    def _gpu():
+        """Temperature and utilisation of the discrete NVIDIA GPU.
+
+        nvidia-smi rather than hwmon: the amdgpu hwmon on this board is the
+        CPU's integrated graphics, not the card driving the display."""
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=4)
+        except (OSError, subprocess.SubprocessError):
+            return None, None
+        if out.returncode != 0 or not out.stdout.strip():
+            return None, None
+        try:
+            temp, use = out.stdout.strip().splitlines()[0].split(",")
+            return float(temp), float(use)
+        except (ValueError, IndexError):
+            return None, None
+
+    def read(self):
+        now = time.monotonic()
+        if self._cache and (now - self._at) < self.interval:
+            return self._cache
+        gpu_temp, gpu_use = self._gpu()
+        self._cache = {"cpu_temp": self._cpu_temp(), "cpu_use": self._cpu_use(),
+                       "gpu_temp": gpu_temp, "gpu_use": gpu_use}
+        self._at = now
+        return self._cache
+
+
+# -- image preparation ------------------------------------------------------
+FONT_CANDIDATES = (
+    "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Bold.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+)
+_FONTS = {}
+
+
+def font(size):
+    """A bold face at `size`, cached - loading a TTF per frame is wasteful."""
+    if size not in _FONTS:
+        from PIL import ImageFont
+        chosen = None
+        for path in FONT_CANDIDATES:
+            try:
+                chosen = ImageFont.truetype(path, size)
+                break
+            except OSError:
+                continue
+        _FONTS[size] = chosen or ImageFont.load_default()
+    return _FONTS[size]
+
+
+def fit_background(path, canvas):
+    """Open an image and return it as RGB of exactly `canvas`, in the
+    orientation the viewer sees - any panel rotation is applied later, by
+    encode(), so that anything drawn on top comes out the right way up.
+
+    Wallpapers rarely share the panel's aspect ratio, so the image is scaled
+    to cover and centre-cropped: letterboxing a 2:1 panel wastes most of it."""
     from PIL import Image
 
     img = Image.open(path)
-    img.draft("RGB", size)          # let the JPEG decoder downscale while reading
+    img.draft("RGB", canvas)        # let the JPEG decoder downscale while reading
     img = img.convert("RGB")
-    if rotate % 360:
-        img = img.rotate(-rotate, expand=True)
 
-    target_w, target_h = size
+    target_w, target_h = canvas
     scale = max(target_w / img.width, target_h / img.height)
     scaled = (max(target_w, round(img.width * scale)),
               max(target_h, round(img.height * scale)))
     img = img.resize(scaled, Image.LANCZOS)
     left = (img.width - target_w) // 2
     top = (img.height - target_h) // 2
-    img = img.crop((left, top, left + target_w, top + target_h))
+    return img.crop((left, top, left + target_w, top + target_h))
+
+
+def encode(img, rotate=0, circle=False, quality=88):
+    """Mask, rotate into panel orientation, and return baseline JPEG bytes."""
+    from PIL import Image, ImageDraw
 
     if circle:
-        from PIL import ImageDraw
-        mask = Image.new("L", size, 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, target_w - 1, target_h - 1), fill=255)
-        backdrop = Image.new("RGB", size, (0, 0, 0))
+        w, h = img.size
+        mask = Image.new("L", img.size, 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, w - 1, h - 1), fill=255)
+        backdrop = Image.new("RGB", img.size, (0, 0, 0))
         backdrop.paste(img, (0, 0), mask)
         img = backdrop
-
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=quality, optimize=True, progressive=False)
-    return buf.getvalue()
-
-
-def test_pattern(size, label, rotate=0):
-    """Corner-marked image: makes orientation, cropping and scale obvious.
-
-    Drawn the same way a wallpaper is, so the pattern exercises the panel's
-    configured rotation rather than bypassing it: a quarter turn is drawn on a
-    swapped canvas first, so the result is always exactly `size`."""
-    from PIL import Image, ImageDraw
-    rotate %= 360
-    canvas = (size[1], size[0]) if rotate in (90, 270) else size
-    w, h = canvas
-    img = Image.new("RGB", canvas, "#101010")
-    d = ImageDraw.Draw(img)
-    d.rectangle([0, 0, w - 1, h - 1], outline="#00ff88", width=max(2, h // 60))
-    box = max(24, min(w, h) // 6)
-    for (x, y), colour, name in (
-        ((0, 0), "#ff3333", "TL"), ((w - box, 0), "#33ff33", "TR"),
-        ((0, h - box), "#3333ff", "BL"), ((w - box, h - box), "#ffff33", "BR"),
-    ):
-        pad = box // 8
-        d.rectangle([x + pad, y + pad, x + box - pad, y + box - pad], fill=colour)
-        d.text((x + box // 2, y + box // 2), name, fill="#000000", anchor="mm")
-    d.text((w // 2, h // 2), f"{label}\n{size[0]}x{size[1]}", fill="#ffffff",
-           anchor="mm", align="center")
-    if rotate:
+    if rotate % 360:
         img = img.rotate(-rotate, expand=True)
+
     buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=92, progressive=False)
+    img.save(buf, "JPEG", quality=quality, progressive=False)
     return buf.getvalue()
+
+
+def _fmt(value, suffix):
+    return "--" if value is None else "%d%s" % (round(value), suffix)
+
+
+# Overlay text sizes, as a fraction of the panel's height so one setting
+# holds across panels of different resolutions. Overridable per panel through
+# "stats_font" in the config.
+STATS_FONT = {"label": 0.105, "value": 0.135, "percent": 0.060}
+
+
+def draw_stats(img, data, sizes=None):
+    """Overlay CPU and GPU temperature and load along the bottom.
+
+    The band's height is derived from the font sizes rather than fixed, so
+    enlarging the text in the config grows the backdrop with it instead of
+    pushing the readout off the panel.
+
+    Returns a new image; the caller keeps the clean background to
+    re-composite against on the next tick."""
+    from PIL import Image, ImageDraw
+
+    sizes = {**STATS_FONT, **(sizes or {})}
+    w, h = img.size
+
+    f_label = font(max(10, int(h * float(sizes["label"]))))
+    f_value = font(max(14, int(h * float(sizes["value"]))))
+    f_pct = font(max(8, int(h * float(sizes["percent"]))))
+    px_label = f_label.size if hasattr(f_label, "size") else int(h * 0.105)
+    px_value = f_value.size if hasattr(f_value, "size") else int(h * 0.135)
+
+    pad = int(w * 0.035)
+    margin = int(h * 0.035)
+    lead = int(h * 0.015)
+    bar_h = max(5, int(h * 0.022))
+
+    # Lay the rows out from the bottom edge up, then let the band cover them.
+    bar_y = h - margin - bar_h
+    y_temp = bar_y - int(h * 0.028)                       # baseline
+    y_label = y_temp - int(px_value * 0.80) - lead        # baseline
+    band = min(h, max(int(h * 0.26), h - (y_label - int(px_label * 0.80)) + margin))
+    top = h - band
+
+    # A gradient rather than a flat strip: a hard edge across a wallpaper reads
+    # as damage, while a fade looks like part of the picture and still gets
+    # dark enough under the text to keep it legible on any background.
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ramp = (Image.linear_gradient("L")
+            .resize((w, band), Image.BILINEAR)
+            .point(lambda v: int(224 * (v / 255.0) ** 1.6)))
+    layer.paste((0, 0, 0, 255), (0, top, w, h), ramp)
+    d = ImageDraw.Draw(layer)
+    stroke = max(1, h // 400)
+
+    half = w // 2
+    for index, (name, temp, use, accent) in enumerate((
+            ("CPU", data.get("cpu_temp"), data.get("cpu_use"), (125, 200, 255)),
+            ("GPU", data.get("gpu_temp"), data.get("gpu_use"), (140, 240, 170)))):
+        x = index * half
+        d.text((x + pad, y_label), name, font=f_label, fill=accent + (240,),
+               anchor="ls", stroke_width=stroke, stroke_fill=(0, 0, 0, 170))
+        d.text((x + pad, y_temp), _fmt(temp, "\u00b0C"), font=f_value,
+               fill=(255, 255, 255, 250), anchor="ls",
+               stroke_width=stroke + 1, stroke_fill=(0, 0, 0, 170))
+
+        # The percentage is right-aligned to the half it belongs to and the
+        # bar stops short of it, so the bar changes length with the digits
+        # instead of the text drifting over it at 100%.
+        pct = _fmt(use, "%")
+        pct_w = d.textlength(pct, font=f_pct)
+        d.text((x + half - pad, bar_y + bar_h // 2), pct, font=f_pct,
+               fill=(255, 255, 255, 235), anchor="rm",
+               stroke_width=stroke, stroke_fill=(0, 0, 0, 170))
+
+        bar_x0 = x + pad
+        bar_x1 = int(x + half - pad - pct_w - w * 0.016)
+        if bar_x1 > bar_x0 + bar_h:
+            d.rounded_rectangle([bar_x0, bar_y, bar_x1, bar_y + bar_h],
+                                radius=bar_h // 2, fill=(255, 255, 255, 50))
+            if use is not None:
+                span = bar_x1 - bar_x0
+                filled = bar_x0 + int(span * max(0.0, min(100.0, use)) / 100.0)
+                if filled > bar_x0 + bar_h:
+                    d.rounded_rectangle([bar_x0, bar_y, filled, bar_y + bar_h],
+                                        radius=bar_h // 2, fill=accent + (235,))
+
+    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
 
 
 # -- Thermaltake 6" panel (USB HID 264a:2347) -------------------------------
@@ -495,16 +677,29 @@ class Screen:
 
     RETRY = 15.0            # seconds between reconnect attempts
 
-    def __init__(self, driver):
+    def __init__(self, driver, telemetry=None):
         self.driver = driver
+        self.telemetry = telemetry      # set only on panels showing stats
         self.ready = False
         self.next_try = 0.0
-        self.frame = None
+        self.base = None                # fitted background, viewer orientation
+        self.frame = None               # encoded JPEG, panel orientation
         self.source = None
 
     @property
     def name(self):
         return self.driver.NAME
+
+    @property
+    def canvas(self):
+        """Panel size in the orientation the viewer sees it."""
+        w, h = self.driver.size
+        return (h, w) if self.driver.rotate_image % 360 in (90, 270) else (w, h)
+
+    @property
+    def live(self):
+        """True when the frame has to be rebuilt on every tick."""
+        return self.telemetry is not None
 
     def connect(self, now):
         if self.ready or now < self.next_try:
@@ -517,6 +712,7 @@ class Screen:
             return
         self.ready = True
         self.frame = None
+        self.base = None
         size = "x".join(str(v) for v in self.driver.size)
         extra = ""
         if isinstance(info, dict) and "pm" in info:
@@ -524,20 +720,35 @@ class Screen:
         log(f"{self.name}: connected, {size}{extra}")
 
     def show(self, path, quality):
-        """Render `path` for this panel and remember it as the live frame."""
+        """Make `path` this panel's picture and put it up."""
         if not self.ready:
             return
         try:
-            self.frame = render(path, self.driver.size,
-                                circle=self.driver.circle,
-                                rotate=self.driver.rotate_image,
-                                quality=quality)
+            self.base = fit_background(path, self.canvas)
             self.source = path
         except Exception as e:
             log(f"{self.name}: cannot render {os.path.basename(path)}: {e}")
-            self.frame = None
+            self.base = self.frame = None
             return
+        self.compose(quality)
         self.push()
+
+    def compose(self, quality):
+        """Build the JPEG from the cached background plus any live overlay.
+
+        The background is kept decoded and already fitted, so a stats panel
+        re-draws and re-encodes each tick without touching the file again."""
+        if self.base is None:
+            return
+        try:
+            img = self.base
+            if self.telemetry is not None:
+                img = draw_stats(img, self.telemetry.read(),
+                                 self.driver.config.get("stats_font"))
+            self.frame = encode(img, rotate=self.driver.rotate_image,
+                                circle=self.driver.circle, quality=quality)
+        except Exception as e:
+            log(f"{self.name}: cannot compose frame: {e}")
 
     def push(self):
         if not self.ready or self.frame is None:
@@ -556,6 +767,17 @@ class Screen:
         self.ready = False
 
 
+_TELEMETRY = []
+
+
+def shared_telemetry():
+    """One Telemetry for every panel that wants it - the CPU-usage delta is
+    stateful, and two independent readers would halve each other's sample."""
+    if not _TELEMETRY:
+        _TELEMETRY.append(Telemetry())
+    return _TELEMETRY[0]
+
+
 def build_screens(config, only=None):
     screens = []
     for key, driver_class in (("thermaltake", Thermaltake),
@@ -565,7 +787,8 @@ def build_screens(config, only=None):
             continue
         if only and key != only:
             continue
-        screens.append(Screen(driver_class(section)))
+        telemetry = shared_telemetry() if section.get("stats") else None
+        screens.append(Screen(driver_class(section), telemetry))
     return screens
 
 
@@ -690,6 +913,8 @@ def run(config, screens):
             screen.show(choice, quality)
         for screen in screens:
             if screen.ready and screen not in reassign:
+                if screen.live:
+                    screen.compose(quality)   # redraw the stats overlay
                 screen.push()
 
         time.sleep(keepalive)
@@ -745,10 +970,10 @@ def main():
         for screen in screens:
             screen.next_try = 0.0
             screen.connect(time.monotonic())
-        live = [s for s in screens if s.ready]
-        if not live:
+        opened = [s for s in screens if s.ready]
+        if not opened:
             return 1
-        for screen in live:
+        for screen in opened:
             if args.image:
                 screen.show(args.image, int(config["quality"]))
             else:
@@ -756,19 +981,21 @@ def main():
                                             screen.driver.rotate_image)
                 screen.push()
         if args.once:
-            for screen in live:
+            for screen in opened:
                 screen.close()
             return 0
         log("holding the frame - Ctrl-C to stop")
         try:
             while True:
                 time.sleep(float(config["keepalive"]))
-                for screen in live:
+                for screen in opened:
+                    if args.image and screen.live:
+                        screen.compose(int(config["quality"]))
                     screen.push()
         except KeyboardInterrupt:
             pass
         finally:
-            for screen in live:
+            for screen in opened:
                 screen.close()
         return 0
 

@@ -99,17 +99,31 @@ GPU figures come from `nvidia-smi`, not hwmon, because the `amdgpu` hwmon on
 this board is the CPU's integrated graphics rather than the card driving the
 display. A sensor that cannot be read draws a dash instead of failing.
 
-Text size is set by `"stats_font"`, as a fraction of the panel's height so one
-setting holds across panels of different resolutions:
+Typeface and text size are set by `"stats_font"`:
 
 ```json
-"stats_font": { "label": 0.105, "value": 0.135, "percent": 0.060 }
+"stats_font": {
+  "family": "Adwaita Sans",
+  "weight": "Black",
+  "label": 0.105, "value": 0.135, "percent": 0.060
+}
 ```
 
-`label` is the `CPU`/`GPU` heading, `value` the temperature, `percent` the load
-figure. The backdrop's height is derived from these rather than fixed, so
+`family` is a fontconfig pattern (`"Noto Sans"`, `"Adwaita Sans:style=Bold"`)
+or an absolute path to a `.ttf`/`.otf`. `weight` picks a named instance of a
+variable font - Adwaita Sans carries Thin through Black - and is ignored by
+fonts that have none. fc-match answers every pattern with *something*, so a
+misspelt family would otherwise render silently in a substitute; the daemon
+logs the substitution instead.
+
+The three sizes are fractions of the panel's height, so one setting holds
+across panels of different resolutions: `label` is the `CPU`/`GPU` heading,
+`value` the temperature, `percent` the load figure. The backdrop's height is derived from these rather than fixed, so
 raising a size grows the gradient with it instead of pushing the readout off
 the bottom of the panel. Any key may be omitted to keep its default.
+
+Numbers are drawn with tabular figures where PIL has raqm, so a value ticking
+from 9 to 10 does not shove the degree sign sideways twice a second.
 
 The overlay is drawn before the panel rotation is applied, so it stays upright
 on an upside-down panel. Re-compositing costs about 9 ms per tick: the fitted

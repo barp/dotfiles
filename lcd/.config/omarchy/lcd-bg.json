@@ -17,7 +17,9 @@
     "rotate": 0,
     "stats": true,
     "stats_font": {
-      "label": 0.120,
+      "family": "Adwaita Sans",
+      "weight": "Black",
+      "label": 0.105,
       "value": 0.135,
       "percent": 0.06
     }

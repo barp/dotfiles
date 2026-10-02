@@ -221,27 +221,84 @@ class Telemetry:
 
 
 # -- image preparation ------------------------------------------------------
-FONT_CANDIDATES = (
-    "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Bold.ttf",
-    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+# Fallbacks, tried in order, when no font is configured or the configured one
+# cannot be loaded. Adwaita Sans is a variable font, so a weight far heavier
+# than Bold is available for the big readout.
+FONT_FALLBACKS = (
+    ("/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf", "Black"),
+    ("/usr/share/fonts/noto/NotoSans-Bold.ttf", None),
+    ("/usr/share/fonts/liberation/LiberationSans-Bold.ttf", None),
+    ("/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Bold.ttf", None),
 )
 _FONTS = {}
+_FC_CACHE = {}
 
 
-def font(size):
-    """A bold face at `size`, cached - loading a TTF per frame is wasteful."""
-    if size not in _FONTS:
-        from PIL import ImageFont
-        chosen = None
-        for path in FONT_CANDIDATES:
+def resolve_font(spec):
+    """Turn a config value into a font file path.
+
+    Accepts a path, or a fontconfig pattern such as "Adwaita Sans" or
+    "Noto Sans:style=Bold" - fc-match always answers with *something*, so the
+    result is only trusted when the family actually matches what was asked."""
+    if not spec:
+        return None
+    if os.path.sep in spec and os.path.isfile(spec):
+        return spec
+    if spec in _FC_CACHE:
+        return _FC_CACHE[spec]
+    path = None
+    try:
+        out = subprocess.run(["fc-match", "-f", "%{file}\t%{family[0]}", spec],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            path, _, matched = out.stdout.strip().partition("\t")
+            # fc-match substitutes its best guess rather than failing, so a
+            # misspelt family yields a real file for a different typeface.
+            # Say so instead of quietly rendering in something else.
+            wanted = spec.split(":")[0].strip()
+            if wanted and matched and wanted.lower() != matched.strip().lower():
+                log(f"font {spec!r} not installed; fontconfig substituted "
+                    f"{matched.strip()!r}")
+    except (OSError, subprocess.SubprocessError):
+        path = None
+    _FC_CACHE[spec] = path
+    return path
+
+
+def font(size, spec=None, weight=None):
+    """A face at `size`, cached - loading a TTF per frame is wasteful.
+
+    `spec` is a font path or fontconfig pattern; `weight` names a named
+    instance of a variable font (Bold, ExtraBold, Black, ...) and is ignored
+    by fonts that do not carry one."""
+    key = (spec, weight, size)
+    if key in _FONTS:
+        return _FONTS[key]
+    from PIL import ImageFont
+
+    attempts = []
+    if spec:
+        resolved = resolve_font(spec)
+        if resolved:
+            attempts.append((resolved, weight))
+    attempts.extend((path, weight or default_weight)
+                    for path, default_weight in FONT_FALLBACKS)
+
+    chosen = None
+    for path, want in attempts:
+        try:
+            face = ImageFont.truetype(path, size)
+        except OSError:
+            continue
+        if want:
             try:
-                chosen = ImageFont.truetype(path, size)
-                break
-            except OSError:
-                continue
-        _FONTS[size] = chosen or ImageFont.load_default()
-    return _FONTS[size]
+                face.set_variation_by_name(want)
+            except Exception:
+                pass        # not a variable font, or no such named instance
+        chosen = face
+        break
+    _FONTS[key] = chosen or ImageFont.load_default()
+    return _FONTS[key]
 
 
 def fit_background(path, canvas):
@@ -293,7 +350,17 @@ def _fmt(value, suffix):
 # Overlay text sizes, as a fraction of the panel's height so one setting
 # holds across panels of different resolutions. Overridable per panel through
 # "stats_font" in the config.
-STATS_FONT = {"label": 0.105, "value": 0.135, "percent": 0.060}
+STATS_FONT = {"family": None, "weight": None,
+              "label": 0.105, "value": 0.135, "percent": 0.060}
+
+# Tabular figures keep every digit the same width, so a value ticking from 9
+# to 10 does not shove the degree sign sideways twice a second. Needs raqm;
+# without it PIL still draws, just proportionally.
+try:
+    from PIL import features as _pil_features
+    _TNUM = ["tnum"] if _pil_features.check("raqm") else None
+except Exception:
+    _TNUM = None
 
 
 def draw_stats(img, data, sizes=None):
@@ -310,9 +377,10 @@ def draw_stats(img, data, sizes=None):
     sizes = {**STATS_FONT, **(sizes or {})}
     w, h = img.size
 
-    f_label = font(max(10, int(h * float(sizes["label"]))))
-    f_value = font(max(14, int(h * float(sizes["value"]))))
-    f_pct = font(max(8, int(h * float(sizes["percent"]))))
+    family, weight = sizes.get("family"), sizes.get("weight")
+    f_label = font(max(10, int(h * float(sizes["label"]))), family, weight)
+    f_value = font(max(14, int(h * float(sizes["value"]))), family, weight)
+    f_pct = font(max(8, int(h * float(sizes["percent"]))), family, weight)
     px_label = f_label.size if hasattr(f_label, "size") else int(h * 0.105)
     px_value = f_value.size if hasattr(f_value, "size") else int(h * 0.135)
 
@@ -347,16 +415,16 @@ def draw_stats(img, data, sizes=None):
         d.text((x + pad, y_label), name, font=f_label, fill=accent + (240,),
                anchor="ls", stroke_width=stroke, stroke_fill=(0, 0, 0, 170))
         d.text((x + pad, y_temp), _fmt(temp, "\u00b0C"), font=f_value,
-               fill=(255, 255, 255, 250), anchor="ls",
+               fill=(255, 255, 255, 250), anchor="ls", features=_TNUM,
                stroke_width=stroke + 1, stroke_fill=(0, 0, 0, 170))
 
         # The percentage is right-aligned to the half it belongs to and the
         # bar stops short of it, so the bar changes length with the digits
         # instead of the text drifting over it at 100%.
         pct = _fmt(use, "%")
-        pct_w = d.textlength(pct, font=f_pct)
+        pct_w = d.textlength(pct, font=f_pct, features=_TNUM)
         d.text((x + half - pad, bar_y + bar_h // 2), pct, font=f_pct,
-               fill=(255, 255, 255, 235), anchor="rm",
+               fill=(255, 255, 255, 235), anchor="rm", features=_TNUM,
                stroke_width=stroke, stroke_fill=(0, 0, 0, 170))
 
         bar_x0 = x + pad

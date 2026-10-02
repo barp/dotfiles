@@ -347,6 +347,33 @@ def _fmt(value, suffix):
     return "--" if value is None else "%d%s" % (round(value), suffix)
 
 
+def _mean_luma(img, box):
+    """Perceived brightness, 0-255, of a region - sampled from a thumbnail
+    rather than every pixel, since only the rough level matters."""
+    from PIL import Image
+
+    left, top, right, bottom = (int(v) for v in box)
+    left, top = max(0, left), max(0, top)
+    right, bottom = min(img.width, right), min(img.height, bottom)
+    if right <= left or bottom <= top:
+        return 128.0
+    patch = img.crop((left, top, right, bottom)).convert("L")
+    return float(patch.resize((1, 1), Image.BILINEAR).getpixel((0, 0)))
+
+
+def _palette(luma, accent):
+    """Text, stroke, bar-track and accent colours legible over `luma`.
+
+    A fixed light-on-dark scheme fails on a pale wallpaper, where the gradient
+    never gets dark enough to carry white text; inverting to dark-on-light is
+    the only thing that reliably holds contrast across arbitrary pictures."""
+    if luma >= 145:                                   # pale background
+        return ((18, 18, 24, 255), (255, 255, 255, 205),
+                (0, 0, 0, 70), tuple(int(c * 0.40) for c in accent))
+    return ((255, 255, 255, 250), (0, 0, 0, 175),
+            (255, 255, 255, 50), accent)
+
+
 # Overlay text sizes, as a fraction of the panel's height so one setting
 # holds across panels of different resolutions. Overridable per panel through
 # "stats_font" in the config.
@@ -397,13 +424,17 @@ def draw_stats(img, data, sizes=None):
     top = h - band
 
     # A gradient rather than a flat strip: a hard edge across a wallpaper reads
-    # as damage, while a fade looks like part of the picture and still gets
-    # dark enough under the text to keep it legible on any background.
-    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    # as damage, while a fade looks like part of the picture. Shade first and
+    # composite, so the text can be coloured against what it will really sit
+    # on - the gradient is part of that background, not separate from it.
+    shade = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ramp = (Image.linear_gradient("L")
             .resize((w, band), Image.BILINEAR)
             .point(lambda v: int(224 * (v / 255.0) ** 1.6)))
-    layer.paste((0, 0, 0, 255), (0, top, w, h), ramp)
+    shade.paste((0, 0, 0, 255), (0, top, w, h), ramp)
+    shaded = Image.alpha_composite(img.convert("RGBA"), shade)
+
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
     stroke = max(1, h // 400)
 
@@ -412,11 +443,18 @@ def draw_stats(img, data, sizes=None):
             ("CPU", data.get("cpu_temp"), data.get("cpu_use"), (125, 200, 255)),
             ("GPU", data.get("gpu_temp"), data.get("gpu_use"), (140, 240, 170)))):
         x = index * half
-        d.text((x + pad, y_label), name, font=f_label, fill=accent + (240,),
-               anchor="ls", stroke_width=stroke, stroke_fill=(0, 0, 0, 170))
+        # Measure where the heading and temperature actually land, not the
+        # whole half: the far end of the bar often sits on quite different
+        # pixels, and it is the text that has to stay readable.
+        luma = _mean_luma(shaded, (x + pad, y_label - px_label,
+                                   x + pad + int(half * 0.55), y_temp))
+        text_fill, stroke_fill, track_fill, accent = _palette(luma, accent)
+
+        d.text((x + pad, y_label), name, font=f_label, fill=accent + (245,),
+               anchor="ls", stroke_width=stroke, stroke_fill=stroke_fill)
         d.text((x + pad, y_temp), _fmt(temp, "\u00b0C"), font=f_value,
-               fill=(255, 255, 255, 250), anchor="ls", features=_TNUM,
-               stroke_width=stroke + 1, stroke_fill=(0, 0, 0, 170))
+               fill=text_fill, anchor="ls", features=_TNUM,
+               stroke_width=stroke + 1, stroke_fill=stroke_fill)
 
         # The percentage is right-aligned to the half it belongs to and the
         # bar stops short of it, so the bar changes length with the digits
@@ -424,14 +462,14 @@ def draw_stats(img, data, sizes=None):
         pct = _fmt(use, "%")
         pct_w = d.textlength(pct, font=f_pct, features=_TNUM)
         d.text((x + half - pad, bar_y + bar_h // 2), pct, font=f_pct,
-               fill=(255, 255, 255, 235), anchor="rm", features=_TNUM,
-               stroke_width=stroke, stroke_fill=(0, 0, 0, 170))
+               fill=text_fill, anchor="rm", features=_TNUM,
+               stroke_width=stroke, stroke_fill=stroke_fill)
 
         bar_x0 = x + pad
         bar_x1 = int(x + half - pad - pct_w - w * 0.016)
         if bar_x1 > bar_x0 + bar_h:
             d.rounded_rectangle([bar_x0, bar_y, bar_x1, bar_y + bar_h],
-                                radius=bar_h // 2, fill=(255, 255, 255, 50))
+                                radius=bar_h // 2, fill=track_fill)
             if use is not None:
                 span = bar_x1 - bar_x0
                 filled = bar_x0 + int(span * max(0.0, min(100.0, use)) / 100.0)
@@ -439,7 +477,40 @@ def draw_stats(img, data, sizes=None):
                     d.rounded_rectangle([bar_x0, bar_y, filled, bar_y + bar_h],
                                         radius=bar_h // 2, fill=accent + (235,))
 
-    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+    return Image.alpha_composite(shaded, layer).convert("RGB")
+
+
+def test_pattern(size, label, rotate=0):
+    """Corner-marked image: makes orientation, cropping and scale obvious.
+
+    Drawn the same way a wallpaper is, so the pattern exercises the panel's
+    configured rotation rather than bypassing it: a quarter turn is drawn on a
+    swapped canvas first, so the result is always exactly `size`."""
+    from PIL import Image, ImageDraw
+
+    rotate %= 360
+    canvas = (size[1], size[0]) if rotate in (90, 270) else size
+    w, h = canvas
+    img = Image.new("RGB", canvas, "#101010")
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, w - 1, h - 1], outline="#00ff88", width=max(2, h // 60))
+    box = max(24, min(w, h) // 6)
+    for (x, y), colour, name in (
+        ((0, 0), "#ff3333", "TL"), ((w - box, 0), "#33ff33", "TR"),
+        ((0, h - box), "#3333ff", "BL"), ((w - box, h - box), "#ffff33", "BR"),
+    ):
+        inset = box // 8
+        d.rectangle([x + inset, y + inset, x + box - inset, y + box - inset],
+                    fill=colour)
+        d.text((x + box // 2, y + box // 2), name, fill="#000000", anchor="mm")
+    d.text((w // 2, h // 2), f"{label}\n{size[0]}x{size[1]}", fill="#ffffff",
+           anchor="mm", align="center")
+    if rotate:
+        img = img.rotate(-rotate, expand=True)
+
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=92, progressive=False)
+    return buf.getvalue()
 
 
 # -- Thermaltake 6" panel (USB HID 264a:2347) -------------------------------

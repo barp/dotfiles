@@ -122,6 +122,12 @@ across panels of different resolutions: `label` is the `CPU`/`GPU` heading,
 raising a size grows the gradient with it instead of pushing the readout off
 the bottom of the panel. Any key may be omitted to keep its default.
 
+Text colour is chosen per half from the brightness of the shaded background
+behind it: light text with a dark outline over a dark picture, dark text with
+a pale halo over a bright one, and the heading's accent colour darkened to
+match. A fixed light-on-dark scheme washes out on a pale wallpaper, which the
+gradient alone cannot fix without blacking out the picture.
+
 Numbers are drawn with tabular figures where PIL has raqm, so a value ticking
 from 9 to 10 does not shove the degree sign sideways twice a second.
 

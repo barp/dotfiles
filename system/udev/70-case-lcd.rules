@@ -1,0 +1,9 @@
+# Case LCD panels driven by omarchy-lcd-bg.
+# Must sort before 73-seat-late.rules, which runs the uaccess builtin that
+# turns TAG+="uaccess" into an ACL for the user logged in at the seat.
+
+# Thermaltake 6" LCD Panel Kit - spoken to through its hidraw node.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="264a", ATTRS{idProduct}=="2347", TAG+="uaccess"
+
+# Thermalright / ChiZhu Tech USBDISPLAY - raw bulk transfers through usbfs.
+SUBSYSTEM=="usb", ATTR{idVendor}=="87ad", ATTR{idProduct}=="70db", TAG+="uaccess"

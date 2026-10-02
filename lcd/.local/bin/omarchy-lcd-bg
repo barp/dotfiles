@@ -1,0 +1,780 @@
+#!/usr/bin/python3
+"""omarchy-lcd-bg - show the current theme's backgrounds on the case LCD panels.
+
+Two panels, two unrelated protocols, one daemon:
+
+  Thermaltake 6" LCD Panel Kit   USB HID 264a:2347.  1110x540 baseline JPEG
+                                 over the "BY" protocol.  Framing adapted from
+                                 deniswsrosa/thermaltake-6inch-lcd-linux (MIT).
+  Thermalright / ChiZhu panel    USB bulk 87ad:70db, "USBLCDNew" protocol.
+                                 One PID covers dozens of coolers, so the
+                                 geometry is probed from the handshake.
+
+Backgrounds are found exactly the way `omarchy theme bg next` finds them, so
+the panels follow the active theme.  Both panels drop back to their own screen
+when frames stop arriving, so the current picture is re-sent every keepalive
+tick; a new one is picked every `interval` seconds and whenever the theme
+changes.  SIGUSR1 advances to the next picture immediately.
+"""
+
+__version__ = "1.0"
+
+import argparse
+import glob
+import io
+import json
+import os
+import random
+import select
+import signal
+import sys
+import time
+
+STATE = os.path.expanduser("~/.local/state/omarchy/current")
+CONFIG = os.path.expanduser("~/.config/omarchy/lcd-bg.json")
+# Per-machine overrides, merged over CONFIG and never versioned.  How a panel
+# is physically mounted - which way up it sits in the case - cannot be probed
+# and differs between machines sharing these dotfiles, so it belongs here
+# rather than in the file stow links into the repo.
+LOCAL_CONFIG = os.path.expanduser("~/.config/omarchy/lcd-bg.local.json")
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+
+DEFAULTS = {
+    "interval": 300,        # seconds a picture stays up
+    "keepalive": 2.0,       # re-send period; panels time out after ~5s
+    "quality": 88,          # JPEG quality
+    "shuffle": True,        # random order vs. sorted order
+    "avoid_desktop_background": True,   # skip whatever the desktop is wearing
+    "thermaltake": {"enabled": True, "brightness": 100, "rotate": 0},
+    "thermalright": {"enabled": True, "resolution": None, "circle": False,
+                     "rotate": 0},
+}
+
+
+def load_config():
+    """DEFAULTS, then the versioned config, then this machine's overrides."""
+    cfg = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
+    for path in (CONFIG, LOCAL_CONFIG):
+        try:
+            with open(path) as fh:
+                layer = json.load(fh)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as e:
+            log(f"config {path}: {e}; ignoring it")
+            continue
+        for key, value in layer.items():
+            if isinstance(cfg.get(key), dict) and isinstance(value, dict):
+                cfg[key].update(value)
+            else:
+                cfg[key] = value
+    return cfg
+
+
+def log(msg):
+    print(f"omarchy-lcd-bg: {msg}", file=sys.stderr, flush=True)
+
+
+# -- backgrounds ------------------------------------------------------------
+def theme_name():
+    try:
+        with open(os.path.join(STATE, "theme.name")) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def desktop_background():
+    """The image the desktop itself is wearing, or None.
+
+    Omarchy points ~/.local/state/omarchy/current/background at the live
+    wallpaper and repoints it on `omarchy theme bg next`."""
+    try:
+        return os.path.realpath(os.path.join(STATE, "background"))
+    except OSError:
+        return None
+
+
+def backgrounds(exclude=None):
+    """Every background for the active theme, the way omarchy-theme-bg-next
+    enumerates them: the user's additions first, then the theme's own.
+
+    `exclude` drops one image - the desktop's own wallpaper - so the panels
+    show something the monitor isn't already showing.  If that would leave
+    nothing, the exclusion is dropped: a theme with a single background is
+    better served by duplicating it than by going dark."""
+    name = theme_name()
+    found = []
+    for directory in (os.path.expanduser(f"~/.config/omarchy/backgrounds/{name}"),
+                      os.path.join(STATE, "theme", "backgrounds")):
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for entry in entries:
+            path = os.path.join(directory, entry)
+            if entry.lower().endswith(IMAGE_EXTS) and os.path.isfile(path):
+                found.append(path)
+    if exclude:
+        kept = [p for p in found if os.path.realpath(p) != exclude]
+        if kept:
+            return kept
+        if found:
+            log("the desktop wallpaper is the only background for this theme; "
+                "showing it anyway")
+    return found
+
+
+# -- image preparation ------------------------------------------------------
+def render(path, size, circle=False, rotate=0, quality=88):
+    """Open an image and return baseline JPEG bytes of exactly `size`.
+
+    Wallpapers rarely share the panel's aspect ratio, so the image is scaled to
+    cover and centre-cropped - letterboxing a 2:1 panel with black bars wastes
+    most of it."""
+    from PIL import Image
+
+    img = Image.open(path)
+    img.draft("RGB", size)          # let the JPEG decoder downscale while reading
+    img = img.convert("RGB")
+    if rotate % 360:
+        img = img.rotate(-rotate, expand=True)
+
+    target_w, target_h = size
+    scale = max(target_w / img.width, target_h / img.height)
+    scaled = (max(target_w, round(img.width * scale)),
+              max(target_h, round(img.height * scale)))
+    img = img.resize(scaled, Image.LANCZOS)
+    left = (img.width - target_w) // 2
+    top = (img.height - target_h) // 2
+    img = img.crop((left, top, left + target_w, top + target_h))
+
+    if circle:
+        from PIL import ImageDraw
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, target_w - 1, target_h - 1), fill=255)
+        backdrop = Image.new("RGB", size, (0, 0, 0))
+        backdrop.paste(img, (0, 0), mask)
+        img = backdrop
+
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=quality, optimize=True, progressive=False)
+    return buf.getvalue()
+
+
+def test_pattern(size, label, rotate=0):
+    """Corner-marked image: makes orientation, cropping and scale obvious.
+
+    Drawn the same way a wallpaper is, so the pattern exercises the panel's
+    configured rotation rather than bypassing it: a quarter turn is drawn on a
+    swapped canvas first, so the result is always exactly `size`."""
+    from PIL import Image, ImageDraw
+    rotate %= 360
+    canvas = (size[1], size[0]) if rotate in (90, 270) else size
+    w, h = canvas
+    img = Image.new("RGB", canvas, "#101010")
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, w - 1, h - 1], outline="#00ff88", width=max(2, h // 60))
+    box = max(24, min(w, h) // 6)
+    for (x, y), colour, name in (
+        ((0, 0), "#ff3333", "TL"), ((w - box, 0), "#33ff33", "TR"),
+        ((0, h - box), "#3333ff", "BL"), ((w - box, h - box), "#ffff33", "BR"),
+    ):
+        pad = box // 8
+        d.rectangle([x + pad, y + pad, x + box - pad, y + box - pad], fill=colour)
+        d.text((x + box // 2, y + box // 2), name, fill="#000000", anchor="mm")
+    d.text((w // 2, h // 2), f"{label}\n{size[0]}x{size[1]}", fill="#ffffff",
+           anchor="mm", align="center")
+    if rotate:
+        img = img.rotate(-rotate, expand=True)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=92, progressive=False)
+    return buf.getvalue()
+
+
+# -- Thermaltake 6" panel (USB HID 264a:2347) -------------------------------
+class Thermaltake:
+    """The 'BY' protocol: HTTP-like text commands and JPEG frames, each in one
+    1024-byte HID report.
+
+    Every report is framed `5A | len_be16 | payload | sum8 | 5A`, where `len`
+    counts the whole unescaped frame and `sum8` is the sum of the length bytes
+    and payload mod 256.  Between the two `5A` delimiters, `5A` is escaped to
+    `5B 01` and `5B` to `5B 02`.  usbhid strips a leading report-number byte
+    from devices with no numbered reports, so each report goes out as
+    `00` + 1024 bytes."""
+
+    VID, PID = 0x264A, 0x2347
+    NAME = "Thermaltake 6\" panel"
+    SIZE = (1110, 540)
+    PACKET = 1024
+    HEADER = 24
+    CHUNK = PACKET - HEADER
+    MAX_JPEG = 0xC7FFF          # TT RGB Plus refuses anything larger
+    SEQ = 112
+
+    def __init__(self, config):
+        self.config = config
+        self.fd = None
+        self.counter = 0
+        rotate = int(config.get("rotate", 0)) % 360
+        self.size = self.SIZE[::-1] if rotate in (90, 270) else self.SIZE
+        self.circle = False
+        self.rotate_image = 0   # the panel rotates in firmware
+
+    # framing
+    @staticmethod
+    def _frame(payload):
+        total = len(payload) + 5
+        body = bytes((total >> 8, total & 0xFF)) + payload
+        body += bytes((sum(body) & 0xFF,))
+        body = body.replace(b"\x5b", b"\x5b\x02").replace(b"\x5a", b"\x5b\x01")
+        return b"\x5a" + body + b"\x5a"
+
+    @staticmethod
+    def _unframe(data):
+        start = data.index(0x5A)
+        end = data.index(0x5A, start + 1)
+        body = (data[start + 1:end]
+                .replace(b"\x5b\x01", b"\x5a")
+                .replace(b"\x5b\x02", b"\x5b"))
+        if (sum(body[:-1]) & 0xFF) != body[-1]:
+            raise ValueError("reply checksum mismatch")
+        return body[2:-1]
+
+    @classmethod
+    def _message(cls, verb, body=""):
+        return (f"{verb}\r\nSeqNumber={cls.SEQ}\r\nContentType=json\r\n"
+                f"ContentLength={len(body)}\r\n\r\n{body}").encode()
+
+    @classmethod
+    def node(cls):
+        for path in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+            try:
+                with open(os.path.join(path, "device", "uevent")) as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            if f"{cls.VID:08X}:{cls.PID:08X}" in text.upper():
+                return "/dev/" + os.path.basename(path)
+        return None
+
+    def _write(self, report):
+        os.write(self.fd, b"\x00" + report.ljust(self.PACKET, b"\x00"))
+
+    def command(self, verb, body="", timeout=3.0):
+        self._write(self._frame(self._message(verb, body)))
+        ready, _, _ = select.select([self.fd], [], [], timeout)
+        if not ready:
+            raise TimeoutError(f"no reply to {verb!r}")
+        payload = self._unframe(os.read(self.fd, self.PACKET + 1))
+        text = payload.decode(errors="replace")
+        head, _, body_text = text.partition("\r\n\r\n")
+        status = head.split("\r\n", 1)[0]
+        if not status.endswith(" 200"):
+            raise RuntimeError(f"{verb!r} failed: {status}")
+        return json.loads(body_text) if body_text.strip() else None
+
+    def open(self):
+        node = self.node()
+        if not node:
+            raise FileNotFoundError(
+                f"no hidraw node for {self.VID:04x}:{self.PID:04x}")
+        if not os.access(node, os.W_OK):
+            raise PermissionError(f"{node} is not writable - is the udev rule installed?")
+        self.fd = os.open(node, os.O_RDWR)
+        try:
+            info = self.command("POST conn 1")
+            rotate = int(self.config.get("rotate", 0)) % 360
+            if rotate:
+                self.command("POST rotate 1", json.dumps({"degree": rotate}))
+            brightness = self.config.get("brightness")
+            if brightness is not None:
+                self.command("POST brightness 1",
+                             json.dumps({"value": max(0, min(100, int(brightness)))}))
+            self.command("POST realtimeDisplay 1", json.dumps({"enable": True}))
+        except Exception:
+            self.close()
+            raise
+        return info
+
+    def send(self, jpeg):
+        if not 0 < len(jpeg) <= self.MAX_JPEG:
+            raise ValueError(f"JPEG is {len(jpeg)} bytes, limit {self.MAX_JPEG}")
+        total = -(-len(jpeg) // self.CHUNK)
+        for index in range(total):
+            head = bytes((0x5C, 0x03, 0xFD, self.counter,
+                          total >> 8, total & 0xFF,
+                          index >> 8, index & 0xFF, 0x01))
+            piece = jpeg[index * self.CHUNK:(index + 1) * self.CHUNK]
+            self._write(head.ljust(self.HEADER, b"\x00") + piece)
+        self.counter = (self.counter + 1) % 60
+
+    def close(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+
+
+# -- Thermalright / ChiZhu panel (USB bulk 87ad:70db) -----------------------
+# One PID covers dozens of coolers at different resolutions, so the geometry
+# comes from the handshake.  Tables ported from Lexonight1/thermalright-trcc-
+# linux (its FBL catalogue); PM=4 is absent there but is 480x480 in practice,
+# per lFiziXl/retro-aio-thermalright-hypervision-360.
+_PM_TO_FBL = {
+    4: 72, 5: 50, 7: 64, 9: 224, 10: 224, 11: 224, 12: 224, 13: 224, 14: 64,
+    15: 224, 16: 224, 17: 224, 18: 224, 20: 224, 32: 100, 50: 50, 63: 114,
+    64: 114, 65: 192, 66: 192, 68: 192, 69: 192,
+}
+_PM_SUB_TO_FBL = {(1, 48): 114, (1, 49): 192}
+_FBL_192_BY_PM = {1: (1920, 462), 65: (1920, 462), 66: (1920, 462),
+                  68: (1280, 480), 69: (1920, 440)}
+_FBL_224_BY_PM = {9: (854, 480), 10: (960, 540), 11: (854, 480), 12: (800, 480),
+                  13: (960, 320), 15: (640, 172), 16: (960, 540), 17: (960, 320),
+                  18: (960, 320), 20: (854, 480)}
+_FBL_RESOLUTION = {
+    36: (240, 240), 37: (240, 240), 50: (320, 240), 51: (320, 240),
+    52: (320, 240), 53: (320, 240), 54: (360, 360), 58: (320, 240),
+    59: (640, 172), 60: (320, 176), 64: (640, 480), 72: (480, 480),
+    100: (320, 320), 101: (320, 320), 102: (320, 320), 114: (1600, 720),
+    128: (1280, 480), 129: (480, 480), 192: (1920, 462), 224: (854, 480),
+}
+
+
+def resolve_geometry(pm, sub):
+    """Map the handshake's PM/SUB bytes to (width, height, fbl)."""
+    fbl = _PM_SUB_TO_FBL.get((pm, sub)) or _PM_TO_FBL.get(pm, pm)
+    if fbl == 192:
+        size = _FBL_192_BY_PM.get(pm, (1920, 462))
+    elif fbl == 224:
+        size = _FBL_224_BY_PM.get(pm, (854, 480))
+    else:
+        size = _FBL_RESOLUTION.get(fbl)
+    if size is None:
+        return None, None, fbl
+    return size[0], size[1], fbl
+
+
+class Thermalright:
+    """The 'USBLCDNew' protocol: a 64-byte header plus a JPEG, written to the
+    bulk OUT endpoint.
+
+    Header (little-endian): magic 0x12345678 at [0:4], command at [4:8]
+    (2 = JPEG, 3 = raw RGB565), width at [8:12], height at [12:16], the
+    constant 2 at [56:60] and the payload length at [60:64].  The firmware
+    de-blocks the JPEG using the header's geometry, so the JPEG must be
+    exactly the declared size."""
+
+    VID, PID = 0x87AD, 0x70DB
+    NAME = "Thermalright panel"
+    MAGIC = b"\x12\x34\x56\x78"
+    CMD_INFO = 0x01
+    CMD_JPEG = 2
+    CMD_RGB565 = 3
+    WRITE_CHUNK = 16 * 1024
+    ZLP_ALIGN = 512
+
+    def __init__(self, config):
+        self.config = config
+        self.dev = None
+        self.ep_out = self.ep_in = None
+        self.pm = self.sub = self.fbl = None
+        self.size = None
+        self.circle = bool(config.get("circle", False))
+        self.rotate_image = int(config.get("rotate", 0)) % 360
+
+    def open(self):
+        import usb.core
+        import usb.util
+
+        dev = usb.core.find(idVendor=self.VID, idProduct=self.PID)
+        if dev is None:
+            raise FileNotFoundError(f"no USB device {self.VID:04x}:{self.PID:04x}")
+
+        # The firmware can present vendor, HID and mass-storage interfaces; a
+        # kernel driver on any sibling blocks claiming the bulk endpoints.
+        for number in range(4):
+            try:
+                if dev.is_kernel_driver_active(number):
+                    dev.detach_kernel_driver(number)
+            except (usb.core.USBError, NotImplementedError):
+                pass
+        try:
+            cfg = dev.get_active_configuration()
+        except usb.core.USBError:
+            dev.set_configuration()
+            cfg = dev.get_active_configuration()
+
+        interface = cfg[(0, 0)]
+        for endpoint in interface:
+            if usb.util.endpoint_type(endpoint.bmAttributes) != usb.util.ENDPOINT_TYPE_BULK:
+                continue
+            direction = usb.util.endpoint_direction(endpoint.bEndpointAddress)
+            if direction == usb.util.ENDPOINT_OUT and self.ep_out is None:
+                self.ep_out = endpoint.bEndpointAddress
+            elif direction == usb.util.ENDPOINT_IN and self.ep_in is None:
+                self.ep_in = endpoint.bEndpointAddress
+        if self.ep_out is None or self.ep_in is None:
+            self.ep_out, self.ep_in = 0x01, 0x81
+        usb.util.claim_interface(dev, 0)
+        self.dev = dev
+
+        try:
+            self._handshake()
+        except Exception:
+            self.close()
+            raise
+        return {"pm": self.pm, "sub": self.sub, "fbl": self.fbl,
+                "resolution": self.size}
+
+    def _handshake(self):
+        request = bytearray(64)
+        request[0:4] = self.MAGIC
+        request[56] = self.CMD_INFO
+        self.dev.write(self.ep_out, bytes(request), 1000)
+        response = self.dev.read(self.ep_in, 1024, 1000)
+        if len(response) < 41 or response[24] == 0:
+            raise RuntimeError(
+                f"handshake failed (response {len(response)} bytes, "
+                f"PM={response[24] if len(response) > 24 else None})")
+        self.pm, self.sub = response[24], response[36]
+
+        override = self.config.get("resolution")
+        if override:
+            width, height = (int(v) for v in str(override).lower().split("x"))
+            self.fbl = _PM_SUB_TO_FBL.get((self.pm, self.sub)) or \
+                _PM_TO_FBL.get(self.pm, self.pm)
+            self.size = (width, height)
+            return
+        width, height, fbl = resolve_geometry(self.pm, self.sub)
+        self.fbl = fbl
+        if width is None:
+            raise RuntimeError(
+                f"unknown panel (PM={self.pm} SUB={self.sub} FBL={fbl}); set "
+                f'"resolution": "WxH" under "thermalright" in {LOCAL_CONFIG}')
+        self.size = (width, height)
+
+    def send(self, jpeg):
+        if self.pm == 32:
+            raise RuntimeError("PM=32 panels take raw RGB565, not JPEG")
+        width, height = self.size
+        header = bytearray(64)
+        header[0:4] = self.MAGIC
+        header[4:8] = self.CMD_JPEG.to_bytes(4, "little")
+        header[8:12] = width.to_bytes(4, "little")
+        header[12:16] = height.to_bytes(4, "little")
+        header[56:60] = (2).to_bytes(4, "little")
+        header[60:64] = len(jpeg).to_bytes(4, "little")
+        frame = bytes(header) + jpeg
+
+        for offset in range(0, len(frame), self.WRITE_CHUNK):
+            chunk = frame[offset:offset + self.WRITE_CHUNK]
+            wrote = self.dev.write(self.ep_out, chunk, 5000)
+            if wrote < len(chunk):
+                raise IOError(f"short write at {offset}: {wrote}/{len(chunk)}")
+        if len(frame) % self.ZLP_ALIGN == 0:
+            self.dev.write(self.ep_out, b"", 5000)
+
+    def close(self):
+        if self.dev is not None:
+            try:
+                import usb.util
+                usb.util.release_interface(self.dev, 0)
+                usb.util.dispose_resources(self.dev)
+            except Exception:
+                pass
+            self.dev = None
+
+
+# -- panel supervision ------------------------------------------------------
+class Screen:
+    """One panel plus the state needed to keep it alive across unplugs."""
+
+    RETRY = 15.0            # seconds between reconnect attempts
+
+    def __init__(self, driver):
+        self.driver = driver
+        self.ready = False
+        self.next_try = 0.0
+        self.frame = None
+        self.source = None
+
+    @property
+    def name(self):
+        return self.driver.NAME
+
+    def connect(self, now):
+        if self.ready or now < self.next_try:
+            return
+        self.next_try = now + self.RETRY
+        try:
+            info = self.driver.open()
+        except Exception as e:
+            log(f"{self.name}: {e}")
+            return
+        self.ready = True
+        self.frame = None
+        size = "x".join(str(v) for v in self.driver.size)
+        extra = ""
+        if isinstance(info, dict) and "pm" in info:
+            extra = f" (PM={info['pm']} SUB={info['sub']} FBL={info['fbl']})"
+        log(f"{self.name}: connected, {size}{extra}")
+
+    def show(self, path, quality):
+        """Render `path` for this panel and remember it as the live frame."""
+        if not self.ready:
+            return
+        try:
+            self.frame = render(path, self.driver.size,
+                                circle=self.driver.circle,
+                                rotate=self.driver.rotate_image,
+                                quality=quality)
+            self.source = path
+        except Exception as e:
+            log(f"{self.name}: cannot render {os.path.basename(path)}: {e}")
+            self.frame = None
+            return
+        self.push()
+
+    def push(self):
+        if not self.ready or self.frame is None:
+            return
+        try:
+            self.driver.send(self.frame)
+        except Exception as e:
+            log(f"{self.name}: lost ({e}); will retry")
+            self.driver.close()
+            self.ready = False
+            self.next_try = time.monotonic() + self.RETRY
+
+    def close(self):
+        if self.ready:
+            self.driver.close()
+        self.ready = False
+
+
+def build_screens(config, only=None):
+    screens = []
+    for key, driver_class in (("thermaltake", Thermaltake),
+                              ("thermalright", Thermalright)):
+        section = config.get(key, {})
+        if not section.get("enabled", True):
+            continue
+        if only and key != only:
+            continue
+        screens.append(Screen(driver_class(section)))
+    return screens
+
+
+# -- main -------------------------------------------------------------------
+class Playlist:
+    """The pool of pictures the panels draw from.
+
+    Hands a *different* picture to each panel: one panel never shows what
+    another is already showing, and prefers not to repeat what it was just
+    showing.  With fewer pictures than panels duplication is unavoidable, so
+    the preference is dropped before a panel is left blank."""
+
+    def __init__(self, shuffle=True):
+        self.shuffle = shuffle
+        self.queue = []
+        self.wallpaper = None
+
+    def reset(self, wallpaper):
+        """Forget the queue - the theme or the desktop wallpaper moved."""
+        self.wallpaper = wallpaper
+        self.queue = []
+
+    def _refill(self):
+        self.queue = backgrounds(exclude=self.wallpaper)
+        if self.shuffle:
+            random.shuffle(self.queue)
+
+    def take(self, avoid=(), prefer_not=()):
+        """Pop a picture, skipping `avoid` outright and `prefer_not` if it can.
+
+        `avoid` is what the other panels hold right now; `prefer_not` is what
+        this panel is already showing.  Honouring `avoid` matters more - two
+        panels showing one picture is the thing being fixed here - so it is
+        tried on its own once the combined constraint comes up empty."""
+        hard = {a for a in avoid if a}
+        soft = hard | {a for a in prefer_not if a}
+        for pool in (soft, hard):
+            for refilled in (False, True):
+                for index, path in enumerate(self.queue):
+                    if path not in pool:
+                        return self.queue.pop(index)
+                if not refilled:
+                    self._refill()
+        if not self.queue:
+            self._refill()
+        return self.queue.pop(0) if self.queue else None
+
+
+def run(config, screens):
+    """Keep a different random background on each panel until interrupted."""
+    advance = {"now": False}
+
+    def on_usr1(_signum, _frame):
+        advance["now"] = True
+
+    signal.signal(signal.SIGUSR1, on_usr1)
+    stop = {"now": False}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.__setitem__("now", True))
+
+    interval = float(config["interval"])
+    keepalive = float(config["keepalive"])
+    quality = int(config["quality"])
+    avoid = bool(config["avoid_desktop_background"])
+
+    playlist = Playlist(bool(config["shuffle"]))
+    theme = None
+    wallpaper = None
+    picked_at = 0.0
+    complained = False
+
+    while not stop["now"]:
+        now = time.monotonic()
+        for screen in screens:
+            screen.connect(now)
+
+        # Both the theme and the desktop's own wallpaper can change under us -
+        # `omarchy theme bg next` repoints the background link without touching
+        # the theme - so watch each and rebuild the pool when either moves.
+        name = theme_name()
+        desktop = desktop_background() if avoid else None
+        if name != theme:
+            theme = name
+            playlist.reset(desktop)
+            for screen in screens:
+                screen.source = None
+            complained = False
+            log(f"theme is {theme or '(none)'}")
+        if desktop != wallpaper:
+            wallpaper = desktop
+            playlist.reset(desktop)
+            for screen in screens:
+                if screen.source and os.path.realpath(screen.source) == wallpaper:
+                    log(f"{screen.name}: the desktop took this picture")
+                    screen.source = None
+
+        rotate_all = (now - picked_at) >= interval or advance["now"]
+        advance["now"] = False
+        if rotate_all:
+            picked_at = now
+
+        # A panel needs a new picture when everything rotates, when it has
+        # none yet, or when it just reconnected and its frame went with it.
+        # Reassigning every panel at once - rather than one at a time against
+        # the others' stale picks - is what lets two panels swap pictures when
+        # there are exactly as many pictures as panels.
+        reassign = [s for s in screens
+                    if s.ready and (rotate_all or s.source is None
+                                    or s.frame is None)]
+        claimed = {s.source for s in screens
+                   if s.ready and s not in reassign and s.source}
+        for screen in reassign:
+            choice = playlist.take(avoid=claimed, prefer_not=(screen.source,))
+            if choice is None:
+                if not complained:
+                    log(f"no backgrounds found for theme {theme or '(none)'}")
+                    complained = True
+                continue
+            complained = False
+            claimed.add(choice)
+            log(f"{screen.name}: {os.path.basename(choice)}")
+            screen.show(choice, quality)
+        for screen in screens:
+            if screen.ready and screen not in reassign:
+                screen.push()
+
+        time.sleep(keepalive)
+
+    for screen in screens:
+        screen.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--probe", action="store_true",
+                        help="identify the panels and exit")
+    parser.add_argument("--test", action="store_true",
+                        help="show a corner-marked test pattern and hold it")
+    parser.add_argument("--image", metavar="FILE",
+                        help="show this image instead of a theme background")
+    parser.add_argument("--once", action="store_true",
+                        help="with --image/--test, send one frame and exit")
+    parser.add_argument("--panel", choices=("thermaltake", "thermalright"),
+                        help="drive only this panel")
+    parser.add_argument("--resolution", metavar="WxH",
+                        help="override the Thermalright panel geometry")
+    parser.add_argument("--interval", type=float,
+                        help="seconds between pictures")
+    parser.add_argument("--version", action="version", version=__version__)
+    args = parser.parse_args()
+
+    config = load_config()
+    if args.resolution:
+        config["thermalright"]["resolution"] = args.resolution
+    if args.interval is not None:
+        config["interval"] = args.interval
+
+    screens = build_screens(config, only=args.panel)
+    if not screens:
+        log("every panel is disabled")
+        return 1
+
+    if args.probe:
+        failed = 0
+        for screen in screens:
+            screen.next_try = 0.0
+            screen.connect(time.monotonic())
+            if screen.ready:
+                screen.close()
+            else:
+                failed += 1
+        return 1 if failed == len(screens) else 0
+
+    if args.test or args.image:
+        for screen in screens:
+            screen.next_try = 0.0
+            screen.connect(time.monotonic())
+        live = [s for s in screens if s.ready]
+        if not live:
+            return 1
+        for screen in live:
+            if args.image:
+                screen.show(args.image, int(config["quality"]))
+            else:
+                screen.frame = test_pattern(screen.driver.size, screen.name,
+                                            screen.driver.rotate_image)
+                screen.push()
+        if args.once:
+            for screen in live:
+                screen.close()
+            return 0
+        log("holding the frame - Ctrl-C to stop")
+        try:
+            while True:
+                time.sleep(float(config["keepalive"]))
+                for screen in live:
+                    screen.push()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            for screen in live:
+                screen.close()
+        return 0
+
+    run(config, screens)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -22,7 +22,6 @@ shell; then verifies the result.
 ./install.sh --dry-run        # show what would happen, change nothing
 ./install.sh --verify         # health check only
 ./install.sh --stow-only      # re-link packages only
-./install.sh --with-machine   # also apply machine-<hostname>
 ./install.sh --skip-packages  # skip the pacman/AUR step
 ```
 
@@ -47,7 +46,10 @@ and the script refuses to run otherwise.
 | `desktop` | GTK, fontconfig, mimeapps, autostart, fonts, Omarchy web apps |
 | `input` | fcitx5 (Japanese input) |
 | `backgrounds` | Wallpapers not owned by a theme |
-| `machine-<host>` | Per-host hardware config — **not stowed by default** |
+| `lcd` | Case LCD panel daemon, its config and user service |
+
+`system/` holds files that belong outside `$HOME` (a udev rule); it is **not**
+a stow package - `install.sh` places its contents.
 
 `themes/` is at the repo root and is **not** a stow package. `omarchy theme set`
 copies a theme directory into `~/.local/state/omarchy/current/theme/` preserving
@@ -56,6 +58,48 @@ dangle from `~/.local/state`. The shell then falls back to default colors,
 opacity and bar height with no error. `install.sh` deploys themes as real files
 (`cp -aL`) and re-applies the active one. Edit a theme in the repo, then re-run
 `./install.sh`.
+
+## Case LCD panels
+
+`lcd` shows the current theme's backgrounds on the case's LCD panels - a
+different picture on each panel, and never the one the desktop itself is
+wearing. Two panels are supported, each speaking its own protocol:
+
+| Panel | USB ID | Transport |
+|---|---|---|
+| Thermaltake 6" LCD Panel Kit | `264a:2347` | hidraw, "BY" protocol, 1110x540 JPEG |
+| Thermalright / ChiZhu `USBDISPLAY` | `87ad:70db` | vendor bulk, "USBLCDNew", geometry probed |
+
+`install.sh` acts only when one of the panels is actually present: it installs
+`system/udev/70-case-lcd.rules` and enables `omarchy-lcd-bg.service`.
+
+**The rule must keep its `70-` prefix.** `TAG+="uaccess"` is what grants the
+logged-in user access to the devices, and it is consumed by
+`/usr/lib/udev/rules.d/73-seat-late.rules`. A file sorting after that one tags
+the device too late: `udevadm info` shows the tag, `getfacl` shows no ACL, and
+the daemon fails with a permission error nothing else reports.
+
+The daemon runs on `/usr/bin/python3`, not `python3` - the latter is a mise
+shim that cannot see `python-pillow` and `python-pyusb` from pacman.
+
+Panel geometry is read from the device at startup, but **how a panel is
+physically mounted is not discoverable**. That, and anything else specific to
+one machine, goes in `~/.config/omarchy/lcd-bg.local.json`, which is merged
+over the versioned config and is never committed:
+
+```json
+{ "thermalright": { "rotate": 180 } }
+```
+
+| Command | |
+|---|---|
+| `omarchy-lcd-bg --probe` | identify the panels and their geometry |
+| `omarchy-lcd-bg --test` | corner-marked pattern, to check size and rotation |
+| `systemctl --user reload omarchy-lcd-bg` | jump to the next pictures |
+
+Both panels fall back to their own screen when frames stop arriving, so the
+daemon re-sends the current picture every couple of seconds. That is inherent
+to the hardware, not a design choice.
 
 ## btrfs: copy-on-write
 
@@ -81,15 +125,18 @@ Adjust the paths in the `NOCOW_DIRS` / `NOCOW_SUBVOLS` arrays at the top of
 
 ## Per-host config
 
-`monitors.lua`, `displays.json`, and `environment.d/` describe one machine's
-hardware, so they live in `machine-<hostname>/` and are skipped unless asked for:
+This repo holds **no per-machine config.** `monitors.lua`, `displays.json` and
+`environment.d/` describe one machine's hardware, so each host keeps its own
+real files in `~/.config/` and nothing here touches them:
 
-```bash
-./install.sh --with-machine
-```
+- `install.sh` never links them, and has no `--with-machine` flag.
+- `scripts/sync-from-system.sh` never pulls them back in, and explicitly drops
+  `monitors.lua` from the `hypr` package after copying `.config/hypr`.
 
-On a new machine, configure displays natively and commit the result as a new
-`machine-<hostname>/` package.
+Configure displays natively on each machine. A rebuild therefore starts from
+Omarchy's defaults and you set the monitors up once by hand - deliberate, since
+display layout is the one thing that should not follow the dotfiles onto
+different hardware.
 
 ## Scripts
 

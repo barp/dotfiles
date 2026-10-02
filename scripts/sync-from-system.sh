@@ -125,7 +125,9 @@ done
 swap "$ptmp" "$PLUGDEST"
 rm -rf "$ptmp"
 
-# --- Hyprland (monitors.lua is machine-specific, see machine-* package) ---
+# --- Hyprland. monitors.lua describes one machine's displays, so it is
+#     deliberately not versioned: this repo holds no per-machine config, and
+#     each host keeps its own real file in ~/.config/hypr/. ---
 copy hypr .config/hypr
 rm -f "$REPO/hypr/.config/hypr/monitors.lua"
 
@@ -204,10 +206,6 @@ while IFS= read -r img; do
   fi
   printf '%s\t%s\n' "${img#$BGROOT/}" "${owner[$sum]}" >> "$REPO/backgrounds.map"
 done < <(find "$BGROOT" -type f \( -name '*.png' -o -name '*.jpg' \) 2>/dev/null | sort)
-
-# --- Machine-specific: hardware layout for THIS host only ---
-copy "machine-$(hostname -s)" \
-  .config/hypr/monitors.lua .config/omarchy/displays.json .config/environment.d
 
 # --- Drop per-machine theme artifacts. `omarchy theme set` regenerates these,
 #     and they point at theme state outside the repo. They arrive either as

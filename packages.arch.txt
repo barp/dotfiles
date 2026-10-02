@@ -179,8 +179,10 @@ postgresql-libs
 power-profiles-daemon
 powertop
 python-gobject
+python-pillow
 python-pip
 python-poetry-core
+python-pyusb
 qbittorrent-qt5
 qemu-full
 qemu-img

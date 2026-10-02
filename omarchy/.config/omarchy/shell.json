@@ -29,7 +29,12 @@
           "id": "omarchy.tray"
         },
         {
-          "id": "meviusisback.hw-monitor"
+          "id": "meviusisback.hw-monitor",
+          "mode": "icons",
+          "showClocks": false,
+          "showGauges": false,
+          "showGpuTemp": true,
+          "showRam": true
         },
         {
           "id": "omarchy.system-update"

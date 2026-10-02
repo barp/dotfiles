@@ -1,0 +1,18 @@
+[Unit]
+Description=Theme backgrounds on the case LCD panels
+Documentation=man:omarchy-lcd-bg
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omarchy-lcd-bg
+ExecReload=/bin/kill -USR1 $MAINPID
+# The panels come and go with the USB bus; the daemon already retries, but a
+# hard failure should not take the service down for good.
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=graphical-session.target

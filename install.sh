@@ -7,14 +7,13 @@
 #   ./install.sh --stow-only      re-link packages only
 #   ./install.sh --verify         health check only, change nothing
 #   ./install.sh --dry-run        show what would happen
-#   ./install.sh --with-machine   also apply machine-<hostname> (identical hardware only)
 #   ./install.sh --skip-packages  skip the pacman/AUR step
 #
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO"
 
-PACKAGES=(omarchy hypr terminals shell tmux tools mpv desktop input backgrounds)
+PACKAGES=(omarchy hypr terminals shell tmux tools mpv desktop input backgrounds lcd)
 NVIM_REMOTE="git@github.com:barp/lazyvim-config.git"
 
 # Large files rewritten in place - Steam game data, the Monero blockchain -
@@ -29,14 +28,13 @@ NOCOW_SUBVOLS=(
   ".bitmonero"
 )
 
-STOW_ONLY=0; VERIFY_ONLY=0; DRY=0; WITH_MACHINE=0; SKIP_PACKAGES=0
+STOW_ONLY=0; VERIFY_ONLY=0; DRY=0; SKIP_PACKAGES=0
 for a in "$@"; do case "$a" in
   --stow-only)     STOW_ONLY=1 ;;
   --verify)        VERIFY_ONLY=1 ;;
   --dry-run)       DRY=1 ;;
-  --with-machine)  WITH_MACHINE=1 ;;
   --skip-packages) SKIP_PACKAGES=1 ;;
-  -h|--help)       sed -n '3,12p' "$0"; exit 0 ;;
+  -h|--help)       sed -n '3,11p' "$0"; exit 0 ;;
   *) echo "unknown option: $a" >&2; exit 1 ;;
 esac; done
 
@@ -182,6 +180,65 @@ PY
       || bad "$n dangling files in active theme state - run: ./install.sh"
   fi
 
+  # A case LCD panel fails quietly in two ways nothing else reports. The
+  # daemon's Python deps are installed for the system interpreter, but
+  # `python3` on PATH is a mise shim that cannot see them - so the check has
+  # to name /usr/bin/python3 explicitly. And the udev rule can be installed
+  # and the device correctly tagged while no ACL was ever granted, which is
+  # what happens whenever the rules file sorts after 73-seat-late.rules.
+  if [ -f /etc/udev/rules.d/70-case-lcd.rules ] \
+     || systemctl --user is-enabled --quiet omarchy-lcd-bg.service 2>/dev/null; then
+    local lcdres
+    lcdres=$(/usr/bin/python3 - <<'PY'
+import glob, os
+PANELS = {("264a", "2347"): 'Thermaltake 6" panel',
+          ("87ad", "70db"): "Thermalright panel"}
+for d in sorted(glob.glob("/sys/bus/usb/devices/*")):
+    try:
+        vid = open(os.path.join(d, "idVendor")).read().strip().lower()
+        pid = open(os.path.join(d, "idProduct")).read().strip().lower()
+    except OSError:
+        continue
+    name = PANELS.get((vid, pid))
+    if not name:
+        continue
+    # HID panels are reached through their hidraw node, raw-bulk panels
+    # through usbfs. The depth is spelled out rather than using a recursive
+    # ** glob: sysfs is full of symlinks that loop, and ** never returns.
+    # hidraw sits at <device>/<interface>/<hid device>/hidraw/hidrawN.
+    nodes = ["/dev/" + os.path.basename(h) for h in
+             glob.glob(os.path.join(d, "*", "*", "hidraw", "hidraw*"))]
+    if not nodes:
+        try:
+            bus = int(open(os.path.join(d, "busnum")).read())
+            dev = int(open(os.path.join(d, "devnum")).read())
+            nodes = ["/dev/bus/usb/%03d/%03d" % (bus, dev)]
+        except OSError:
+            continue
+    for node in nodes:
+        if os.access(node, os.W_OK):
+            print("ok|%s reachable at %s" % (name, node))
+        else:
+            print("bad|%s NOT writable at %s - uaccess ACL missing, run: ./install.sh"
+                  % (name, node))
+PY
+)
+    if [ -z "$lcdres" ]; then
+      echo "  skip  no case LCD panel present"
+    else
+      while IFS='|' read -r st msg; do
+        [ -n "$msg" ] || continue
+        [ "$st" = ok ] && ok "$msg" || bad "$msg"
+      done <<< "$lcdres"
+      /usr/bin/python3 -c 'import PIL, usb.core' 2>/dev/null \
+        && ok "LCD daemon deps present for /usr/bin/python3" \
+        || bad "python-pillow/python-pyusb missing for /usr/bin/python3 - run: ./install.sh"
+      systemctl --user is-active --quiet omarchy-lcd-bg.service \
+        && ok "omarchy-lcd-bg running" \
+        || bad "omarchy-lcd-bg not running - run: systemctl --user restart omarchy-lcd-bg"
+    fi
+  fi
+
   echo
   [ "$fail" -eq 0 ] && echo "All checks passed." || echo "$fail check(s) failed."
   return "$fail"
@@ -203,11 +260,6 @@ echo "  ok"
 stow_packages() {
   step "Linking packages into \$HOME"
   local pkgs=("${PACKAGES[@]}")
-  if [ "$WITH_MACHINE" -eq 1 ]; then
-    local mpkg="machine-$(hostname -s)"
-    if [ -d "$mpkg" ]; then pkgs+=("$mpkg")
-    else echo "  note: no $mpkg package in this repo; skipping machine-specific config"; fi
-  fi
 
   if [ "$DRY" -eq 1 ]; then
     # Mirror the real invocation exactly (-n simulates, so nothing is adopted).
@@ -247,7 +299,6 @@ stow_packages() {
     && systemctl --user start omarchy-fcitx5.service \
     && echo "  restarted fcitx5 against the linked profile"
   echo "  stowed: ${pkgs[*]}"
-  [ "$WITH_MACHINE" -eq 0 ] && echo "  machine-specific config (monitors, displays) NOT applied; use --with-machine"
   return 0
 }
 
@@ -509,6 +560,55 @@ else
   echo "  no backgrounds.map"
 fi
 
+# -------------------------------------------------------------- lcd ----
+# The case LCD panels are driven by a user daemon, which needs two things the
+# stow package cannot provide: a udev rule granting the logged-in user access
+# to the devices, and an enabled user service. Both panels are optional
+# hardware, so the whole step is skipped on a machine that has neither.
+step "Setting up case LCD panels"
+lcd_found=""
+for d in /sys/bus/usb/devices/*/; do
+  v=$(cat "$d/idVendor" 2>/dev/null) || continue
+  p=$(cat "$d/idProduct" 2>/dev/null) || continue
+  case "$v:$p" in
+    264a:2347) lcd_found="$lcd_found Thermaltake-6in" ;;
+    87ad:70db) lcd_found="$lcd_found Thermalright" ;;
+  esac
+done
+
+if [ -z "$lcd_found" ]; then
+  echo "  no case LCD panel on this machine; skipped"
+elif [ "$DRY" -eq 1 ]; then
+  echo "  would set up:$lcd_found"
+else
+  echo "  found:$lcd_found"
+  # TAG+="uaccess" is consumed by /usr/lib/udev/rules.d/73-seat-late.rules,
+  # which runs the builtin that turns the tag into an ACL. A rules file
+  # sorting after that one tags the device too late and silently grants
+  # nothing - hence the 70- prefix, which must be preserved.
+  if ! cmp -s system/udev/70-case-lcd.rules /etc/udev/rules.d/70-case-lcd.rules; then
+    sudo install -m 0644 system/udev/70-case-lcd.rules /etc/udev/rules.d/70-case-lcd.rules
+    sudo udevadm control --reload-rules
+    # A plain trigger sends "change", which does not re-run the uaccess
+    # builtin; only "add" re-applies the ACL to devices already plugged in.
+    sudo udevadm trigger --action=add --subsystem-match=usb --subsystem-match=hidraw
+    echo "  udev rule installed"
+  else
+    echo "  udev rule already current"
+  fi
+  # stow has just linked the unit into ~/.config/systemd/user; systemd does
+  # not notice a new unit file until it is told to re-read them.
+  systemctl --user daemon-reload >/dev/null 2>&1
+  if systemctl --user enable --now omarchy-lcd-bg.service >/dev/null 2>&1; then
+    systemctl --user restart omarchy-lcd-bg.service >/dev/null 2>&1
+    echo "  omarchy-lcd-bg.service enabled"
+  else
+    echo "  could not enable omarchy-lcd-bg.service"
+  fi
+  [ -f "$HOME/.config/omarchy/lcd-bg.local.json" ] \
+    || echo "  note: panel mounted upside down? create ~/.config/omarchy/lcd-bg.local.json"
+fi
+
 # ----------------------------------------------------------------- apply ----
 step "Applying"
 if [ "$DRY" -eq 1 ]; then
@@ -532,7 +632,6 @@ rc=$?
 
 echo
 echo "Remaining manual steps:"
-[ "$WITH_MACHINE" -eq 0 ] && echo "  - displays/monitors:  ./install.sh --with-machine   (identical hardware only)"
 echo "  - default shell:      chsh -s /usr/bin/zsh"
 echo "  - tmux plugins:       open tmux, press prefix + I"
 exit "$rc"

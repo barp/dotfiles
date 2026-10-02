@@ -9,3 +9,6 @@ node_modules/
 session.json
 .DS_Store
 .sync-stage.*
+
+# Per-machine LCD panel tuning (physical mounting orientation)
+lcd-bg.local.json

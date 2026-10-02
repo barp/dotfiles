@@ -1,0 +1,20 @@
+{
+  "interval": 300,
+  "keepalive": 2.0,
+  "quality": 88,
+  "shuffle": true,
+  "avoid_desktop_background": true,
+
+  "thermaltake": {
+    "enabled": true,
+    "brightness": 100,
+    "rotate": 0
+  },
+
+  "thermalright": {
+    "enabled": true,
+    "resolution": null,
+    "circle": false,
+    "rotate": 0
+  }
+}

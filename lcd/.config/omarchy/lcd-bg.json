@@ -3,7 +3,7 @@
   "keepalive": 2.0,
   "quality": 88,
   "shuffle": true,
-  "avoid_desktop_background": true,
+  "avoid_desktop_background": false,
   "thermaltake": {
     "enabled": true,
     "brightness": 100,

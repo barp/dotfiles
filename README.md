@@ -62,13 +62,19 @@ opacity and bar height with no error. `install.sh` deploys themes as real files
 ## Case LCD panels
 
 `lcd` shows the current theme's backgrounds on the case's LCD panels - a
-different picture on each panel, and never the one the desktop itself is
-wearing. Two panels are supported, each speaking its own protocol:
+different picture on each panel. Two panels are supported, each speaking its
+own protocol:
 
 | Panel | USB ID | Transport |
 |---|---|---|
 | Thermaltake 6" LCD Panel Kit | `264a:2347` | hidraw, "BY" protocol, 1110x540 JPEG |
 | Thermalright / ChiZhu `USBDISPLAY` | `87ad:70db` | vendor bulk, "USBLCDNew", geometry probed |
+
+`avoid_desktop_background` (default **false**) additionally keeps the panels
+off whatever image the desktop is currently using as its wallpaper, tracked
+live through `~/.local/state/omarchy/current/background`. It is a global
+setting, not per panel: with it on, a panel showing the desktop's picture
+moves to another one as soon as the wallpaper changes.
 
 `install.sh` acts only when one of the panels is actually present: it installs
 `system/udev/70-case-lcd.rules` and enables `omarchy-lcd-bg.service`.

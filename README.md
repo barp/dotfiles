@@ -135,6 +135,45 @@ The overlay is drawn before the panel rotation is applied, so it stays upright
 on an upside-down panel. Re-compositing costs about 9 ms per tick: the fitted
 background is cached decoded, and only the overlay and JPEG encode repeat.
 
+### Video
+
+A panel can play a video instead of wallpapers:
+
+```bash
+omarchy-lcd-bg --panel thermaltake --video ~/Videos/clip.mp4
+```
+
+or permanently, in that panel's config - the other panel keeps cycling
+backgrounds, since a video panel runs in its own thread at frame rate rather
+than on the 2 s keepalive tick:
+
+```json
+"video": "~/Videos/clip.mp4",
+"video_fps": 30, "video_quality": 6, "video_loop": true
+```
+
+ffmpeg does the decode, scale, crop, rotate and JPEG encode, so the daemon only
+splits the MJPEG stream and writes frames - the panel wants JPEG, which is what
+MJPEG already is. `video_quality` is ffmpeg's `-q:v`, 2 (best) to 31.
+
+Measured on the Thermaltake's HID endpoint, 1110x540:
+
+| JPEG quality | Frame | Ceiling |
+|---|---|---|
+| q90 | 232 KB | 28 fps |
+| q75 | 144 KB | 45 fps |
+| q60 | 111 KB | 59 fps |
+
+about 6.5 MB/s either way, so frame size sets the ceiling. 30 fps is
+comfortable. Pacing comes from ffmpeg's `-re`: without it the decode runs flat
+out and, since the panel is not the bottleneck at these sizes, the video plays
+several times too fast. A wall-clock check timed from the *first frame* - not
+from the spawn, or ffmpeg's startup latency reads as permanent lag - drops
+frames if playback ever slips behind.
+
+There is no audio: the panel has no speaker, and `-an` keeps the stream to
+video only.
+
 | Command | |
 |---|---|
 | `omarchy-lcd-bg --probe` | identify the panels and their geometry |

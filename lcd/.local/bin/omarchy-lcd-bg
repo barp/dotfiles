@@ -28,6 +28,7 @@ import random
 import select
 import signal
 import subprocess
+import threading
 import sys
 import time
 
@@ -47,9 +48,13 @@ DEFAULTS = {
     "shuffle": True,        # random order vs. sorted order
     "avoid_desktop_background": True,   # skip whatever the desktop is wearing
     "thermaltake": {"enabled": True, "brightness": 100, "rotate": 0,
-                    "stats": False, "stats_font": None},
+                    "stats": False, "stats_font": None,
+                    "video": None, "video_fps": 30, "video_quality": 6,
+                    "video_loop": True},
     "thermalright": {"enabled": True, "resolution": None, "circle": False,
-                     "rotate": 0, "stats": False, "stats_font": None},
+                     "rotate": 0, "stats": False, "stats_font": None,
+                     "video": None, "video_fps": 30, "video_quality": 6,
+                     "video_loop": True},
 }
 
 
@@ -810,6 +815,157 @@ class Thermalright:
             self.dev = None
 
 
+# -- video ------------------------------------------------------------------
+def _rotate_filter(rotate):
+    """ffmpeg filter that puts a frame into panel orientation."""
+    return {90: "transpose=1", 180: "hflip,vflip",
+            270: "transpose=2"}.get(rotate % 360)
+
+
+def mjpeg_frames(stream, chunk=1 << 16):
+    """Split a concatenated-JPEG stream into frames.
+
+    Scanning for the EOI marker is safe here: inside entropy-coded data a
+    literal 0xFF is byte-stuffed as FF 00, and restart markers only go up to
+    FF D7, so FF D9 cannot occur except as a real end-of-image."""
+    buf = b""
+    while True:
+        data = stream.read(chunk)
+        if not data:
+            return
+        buf += data
+        while True:
+            start = buf.find(b"\xff\xd8")
+            if start < 0:
+                buf = buf[-1:]          # a split FF would otherwise be lost
+                break
+            end = buf.find(b"\xff\xd9", start + 2)
+            if end < 0:
+                buf = buf[start:]
+                break
+            yield buf[start:end + 2]
+            buf = buf[end + 2:]
+
+
+class VideoPlayer(threading.Thread):
+    """Plays a video file to one panel, in its own thread.
+
+    ffmpeg does the decode, scale, crop, rotate and JPEG encode, so the only
+    work here is splitting frames and writing them - the panel wants JPEG,
+    which is exactly what an MJPEG stream already is."""
+
+    RETRY = 15.0
+
+    def __init__(self, screen, path, fps=30, quality=6, loop=True):
+        super().__init__(daemon=True, name=f"video:{screen.name}")
+        self.screen = screen
+        self.path = os.path.expanduser(path)
+        self.fps = max(1, int(fps))
+        self.quality = max(2, min(31, int(quality)))
+        self.loop = loop
+        self._stop = threading.Event()
+        self._proc = None
+
+    def stop(self):
+        self._stop.set()
+        proc, self._proc = self._proc, None
+        if proc and proc.poll() is None:
+            proc.terminate()
+
+    def _command(self):
+        driver = self.screen.driver
+        rotate = driver.rotate_image % 360
+        w, h = driver.size
+        cw, ch = (h, w) if rotate in (90, 270) else (w, h)
+        chain = [f"scale={cw}:{ch}:force_original_aspect_ratio=increase",
+                 f"crop={cw}:{ch}", f"fps={self.fps}"]
+        spin = _rotate_filter(rotate)
+        if spin:
+            chain.append(spin)
+        # -re makes ffmpeg emit at the stream's own rate. Without it the
+        # decode runs flat out: these frames compress small enough that the
+        # panel is not the bottleneck either, and the video plays at several
+        # times speed.
+        return ["ffmpeg", "-nostdin", "-loglevel", "error",
+                "-re", "-i", self.path, "-an", "-vf", ",".join(chain),
+                "-q:v", str(self.quality), "-f", "mjpeg", "-"]
+
+    def run(self):
+        while not self._stop.is_set():
+            if not self.screen.ready:
+                self.screen.next_try = 0.0
+                self.screen.connect(time.monotonic())
+                if not self.screen.ready:
+                    self._stop.wait(self.RETRY)
+                    continue
+            if not self._play_once():
+                return
+            if not self.loop:
+                return
+
+    def _play_once(self):
+        """One pass over the file. False means stop trying."""
+        try:
+            proc = subprocess.Popen(self._command(), stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, bufsize=0)
+        except OSError as e:
+            log(f"{self.screen.name}: cannot start ffmpeg ({e})")
+            return False
+        self._proc = proc
+
+        # ffmpeg sets the pace via -re; a wall-clock check backs it up, so a
+        # frame the panel could not keep up with is dropped rather than
+        # letting playback slide permanently behind the soundtrack.
+        shown = dropped = 0
+        period = 1.0 / self.fps
+        # Timed from the first frame, not from the spawn: ffmpeg takes a
+        # moment to start producing, and counting that as lag would make the
+        # guard drop every frame for the whole file.
+        started = None
+        # Only a visible slip matters; per-frame jitter is normal and -re is
+        # already doing the pacing.
+        slack = max(0.5, period * 4)
+        try:
+            for index, frame in enumerate(mjpeg_frames(proc.stdout)):
+                if self._stop.is_set():
+                    break
+                now = time.monotonic()
+                if started is None:
+                    started = now
+                if (now - started) - index * period > slack:
+                    dropped += 1
+                    continue
+                try:
+                    self.screen.driver.send(frame)
+                except Exception as e:
+                    log(f"{self.screen.name}: lost during playback ({e})")
+                    self.screen.driver.close()
+                    self.screen.ready = False
+                    break
+                shown += 1
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+            err = b""
+            try:
+                err = proc.stderr.read() or b""
+            except Exception:
+                pass
+            proc.wait()
+            self._proc = None
+
+        if shown == 0:
+            detail = err.decode(errors="replace").strip().splitlines()
+            log(f"{self.screen.name}: no frames from {os.path.basename(self.path)}"
+                + (f" - {detail[-1]}" if detail else ""))
+            return False
+        elapsed = max(1e-6, time.monotonic() - (started or time.monotonic()))
+        log(f"{self.screen.name}: played {shown} frames "
+            f"({shown / elapsed:.1f} fps)"
+            + (f", dropped {dropped}" if dropped else ""))
+        return True
+
+
 # -- panel supervision ------------------------------------------------------
 class Screen:
     """One panel plus the state needed to keep it alive across unplugs."""
@@ -993,6 +1149,24 @@ def run(config, screens):
     quality = int(config["quality"])
     avoid = bool(config["avoid_desktop_background"])
 
+    # A panel with a video configured is handed to its own thread: it needs
+    # frames at 30 fps, not the 2 s keepalive tick the wallpaper panels run on.
+    players = []
+    for screen in list(screens):
+        section = screen.driver.config
+        path = section.get("video")
+        if not path:
+            continue
+        players.append(VideoPlayer(screen, path,
+                                   fps=section.get("video_fps", 30),
+                                   quality=section.get("video_quality", 6),
+                                   loop=section.get("video_loop", True)))
+        screens.remove(screen)
+    for player in players:
+        log(f"{player.screen.name}: playing {os.path.basename(player.path)} "
+            f"at {player.fps} fps")
+        player.start()
+
     playlist = Playlist(bool(config["shuffle"]))
     theme = None
     wallpaper = None
@@ -1001,6 +1175,20 @@ def run(config, screens):
 
     while not stop["now"]:
         now = time.monotonic()
+
+        # A player only exits when the file could not be played, or it was
+        # set not to loop. Either way the panel should go back to showing
+        # backgrounds rather than sitting dark - which is what a video path
+        # that does not exist on this machine would otherwise cause.
+        for player in list(players):
+            if player.is_alive():
+                continue
+            players.remove(player)
+            screen = player.screen
+            screen.base = screen.frame = screen.source = None
+            screens.append(screen)
+            log(f"{screen.name}: video ended, showing backgrounds")
+
         for screen in screens:
             screen.connect(now)
 
@@ -1058,6 +1246,11 @@ def run(config, screens):
 
         time.sleep(keepalive)
 
+    for player in players:
+        player.stop()
+    for player in players:
+        player.join(timeout=5)
+        player.screen.close()
     for screen in screens:
         screen.close()
 
@@ -1072,6 +1265,12 @@ def main():
                         help="show a corner-marked test pattern and hold it")
     parser.add_argument("--image", metavar="FILE",
                         help="show this image instead of a theme background")
+    parser.add_argument("--video", metavar="FILE",
+                        help="play this video on the panel, on a loop")
+    parser.add_argument("--video-fps", type=float, metavar="N",
+                        help="frame rate for --video")
+    parser.add_argument("--video-quality", type=int, metavar="Q",
+                        help="ffmpeg -q:v for --video, 2 (best) to 31")
     parser.add_argument("--once", action="store_true",
                         help="with --image/--test, send one frame and exit")
     parser.add_argument("--panel", choices=("thermaltake", "thermalright"),
@@ -1088,6 +1287,15 @@ def main():
         config["thermalright"]["resolution"] = args.resolution
     if args.interval is not None:
         config["interval"] = args.interval
+
+    if args.video:
+        for key in ("thermaltake", "thermalright"):
+            if args.panel in (None, key):
+                config[key]["video"] = args.video
+                if args.video_fps:
+                    config[key]["video_fps"] = args.video_fps
+                if args.video_quality:
+                    config[key]["video_quality"] = args.video_quality
 
     screens = build_screens(config, only=args.panel)
     if not screens:

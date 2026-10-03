@@ -50,11 +50,11 @@ DEFAULTS = {
     "thermaltake": {"enabled": True, "brightness": 100, "rotate": 0,
                     "stats": False, "stats_font": None,
                     "video": None, "video_fps": 30, "video_quality": 6,
-                    "video_loop": True},
+                    "video_loop": True, "video_shuffle": False},
     "thermalright": {"enabled": True, "resolution": None, "circle": False,
                      "rotate": 0, "stats": False, "stats_font": None,
                      "video": None, "video_fps": 30, "video_quality": 6,
-                     "video_loop": True},
+                     "video_loop": True, "video_shuffle": False},
 }
 
 
@@ -855,16 +855,39 @@ class VideoPlayer(threading.Thread):
     which is exactly what an MJPEG stream already is."""
 
     RETRY = 15.0
+    VIDEO_EXTS = (".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v", ".gif")
 
-    def __init__(self, screen, path, fps=30, quality=6, loop=True):
+    def __init__(self, screen, paths, fps=30, quality=6, loop=True,
+                 shuffle=False):
         super().__init__(daemon=True, name=f"video:{screen.name}")
         self.screen = screen
-        self.path = os.path.expanduser(path)
+        self.paths = self._resolve(paths)
         self.fps = max(1, int(fps))
         self.quality = max(2, min(31, int(quality)))
         self.loop = loop
+        self.shuffle = shuffle
         self._stop = threading.Event()
         self._proc = None
+
+    @classmethod
+    def _resolve(cls, paths):
+        """One path, a directory, or a list of either -> a list of files.
+
+        A directory is expanded to the video files directly inside it, sorted,
+        so a playlist can be "point at this folder" rather than a list that
+        has to be edited every time a file is added."""
+        if isinstance(paths, (str, bytes)):
+            paths = [paths]
+        found = []
+        for entry in paths or ():
+            path = os.path.expanduser(str(entry))
+            if os.path.isdir(path):
+                found.extend(sorted(
+                    os.path.join(path, name) for name in os.listdir(path)
+                    if name.lower().endswith(cls.VIDEO_EXTS)))
+            else:
+                found.append(path)
+        return found
 
     def stop(self):
         self._stop.set()
@@ -872,7 +895,7 @@ class VideoPlayer(threading.Thread):
         if proc and proc.poll() is None:
             proc.terminate()
 
-    def _command(self):
+    def _command(self, path):
         driver = self.screen.driver
         rotate = driver.rotate_image % 360
         w, h = driver.size
@@ -887,26 +910,39 @@ class VideoPlayer(threading.Thread):
         # panel is not the bottleneck either, and the video plays at several
         # times speed.
         return ["ffmpeg", "-nostdin", "-loglevel", "error",
-                "-re", "-i", self.path, "-an", "-vf", ",".join(chain),
+                "-re", "-i", path, "-an", "-vf", ",".join(chain),
                 "-q:v", str(self.quality), "-f", "mjpeg", "-"]
 
     def run(self):
         while not self._stop.is_set():
-            if not self.screen.ready:
-                self.screen.next_try = 0.0
-                self.screen.connect(time.monotonic())
+            order = list(self.paths)
+            if self.shuffle:
+                random.shuffle(order)
+            played = 0
+            for path in order:
+                if self._stop.is_set():
+                    return
                 if not self.screen.ready:
-                    self._stop.wait(self.RETRY)
-                    continue
-            if not self._play_once():
+                    self.screen.next_try = 0.0
+                    self.screen.connect(time.monotonic())
+                    if not self.screen.ready:
+                        self._stop.wait(self.RETRY)
+                        continue
+                if self._play_once(path):
+                    played += 1
+            # One unplayable file just gets skipped - a playlist should not
+            # die because one entry was deleted. A list where *nothing* plays
+            # would otherwise spin at full speed forever, so that ends it.
+            if played == 0:
+                log(f"{self.screen.name}: nothing in the playlist could be played")
                 return
             if not self.loop:
                 return
 
-    def _play_once(self):
-        """One pass over the file. False means stop trying."""
+    def _play_once(self, path):
+        """One pass over one file. False means that file did not play."""
         try:
-            proc = subprocess.Popen(self._command(), stdout=subprocess.PIPE,
+            proc = subprocess.Popen(self._command(path), stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, bufsize=0)
         except OSError as e:
             log(f"{self.screen.name}: cannot start ffmpeg ({e})")
@@ -932,7 +968,14 @@ class VideoPlayer(threading.Thread):
                 now = time.monotonic()
                 if started is None:
                     started = now
-                if (now - started) - index * period > slack:
+                due = started + index * period
+                if now < due:
+                    # ffmpeg hands over a burst of buffered frames when it
+                    # starts, so -re alone is not enough: without waiting here
+                    # every clip opens with a short fast-forward.
+                    if self._stop.wait(due - now):
+                        break
+                elif now - due > slack:
                     dropped += 1
                     continue
                 try:
@@ -956,11 +999,11 @@ class VideoPlayer(threading.Thread):
 
         if shown == 0:
             detail = err.decode(errors="replace").strip().splitlines()
-            log(f"{self.screen.name}: no frames from {os.path.basename(self.path)}"
+            log(f"{self.screen.name}: no frames from {os.path.basename(path)}"
                 + (f" - {detail[-1]}" if detail else ""))
             return False
         elapsed = max(1e-6, time.monotonic() - (started or time.monotonic()))
-        log(f"{self.screen.name}: played {shown} frames "
+        log(f"{self.screen.name}: {os.path.basename(path)}: {shown} frames "
             f"({shown / elapsed:.1f} fps)"
             + (f", dropped {dropped}" if dropped else ""))
         return True
@@ -1157,14 +1200,22 @@ def run(config, screens):
         path = section.get("video")
         if not path:
             continue
-        players.append(VideoPlayer(screen, path,
-                                   fps=section.get("video_fps", 30),
-                                   quality=section.get("video_quality", 6),
-                                   loop=section.get("video_loop", True)))
+        player = VideoPlayer(screen, path,
+                             fps=section.get("video_fps", 30),
+                             quality=section.get("video_quality", 6),
+                             loop=section.get("video_loop", True),
+                             shuffle=section.get("video_shuffle", False))
+        if not player.paths:
+            # An empty folder or a blank list: leave the panel on backgrounds
+            # rather than handing it to a player with nothing to show.
+            log(f"{screen.name}: no video files found, showing backgrounds")
+            continue
+        players.append(player)
         screens.remove(screen)
     for player in players:
-        log(f"{player.screen.name}: playing {os.path.basename(player.path)} "
-            f"at {player.fps} fps")
+        names = ", ".join(os.path.basename(x) for x in player.paths)
+        log(f"{player.screen.name}: playlist of {len(player.paths)} "
+            f"at {player.fps} fps: {names}")
         player.start()
 
     playlist = Playlist(bool(config["shuffle"]))
@@ -1265,8 +1316,9 @@ def main():
                         help="show a corner-marked test pattern and hold it")
     parser.add_argument("--image", metavar="FILE",
                         help="show this image instead of a theme background")
-    parser.add_argument("--video", metavar="FILE",
-                        help="play this video on the panel, on a loop")
+    parser.add_argument("--video", metavar="FILE", nargs="+",
+                        help="play these videos on the panel, on a loop; "
+                             "a directory plays everything inside it")
     parser.add_argument("--video-fps", type=float, metavar="N",
                         help="frame rate for --video")
     parser.add_argument("--video-quality", type=int, metavar="Q",

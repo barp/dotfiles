@@ -137,10 +137,11 @@ background is cached decoded, and only the overlay and JPEG encode repeat.
 
 ### Video
 
-A panel can play a video instead of wallpapers:
+A panel can play a video, or a playlist, instead of wallpapers:
 
 ```bash
-omarchy-lcd-bg --panel thermaltake --video ~/Videos/clip.mp4
+omarchy-lcd-bg --panel thermaltake --video a.mp4 b.mp4
+omarchy-lcd-bg --panel thermaltake --video ~/Videos/lcd    # a whole folder
 ```
 
 or permanently, in that panel's config - the other panel keeps cycling
@@ -148,9 +149,17 @@ backgrounds, since a video panel runs in its own thread at frame rate rather
 than on the 2 s keepalive tick:
 
 ```json
-"video": "~/Videos/clip.mp4",
-"video_fps": 30, "video_quality": 6, "video_loop": true
+"video": ["~/Videos/a.webm", "~/Videos/b.webm"],
+"video_fps": 30, "video_quality": 6,
+"video_loop": true, "video_shuffle": false
 ```
+
+`video` takes one path, a list, or a directory - a directory is expanded to the
+video files inside it, so a playlist can be a folder to drop files into rather
+than a list to keep editing. Clips play in order (or shuffled) and the list
+repeats. A file that will not play is skipped rather than ending the playlist;
+only a list where *nothing* plays gives up, and the panel then falls back to
+backgrounds.
 
 ffmpeg does the decode, scale, crop, rotate and JPEG encode, so the daemon only
 splits the MJPEG stream and writes frames - the panel wants JPEG, which is what
@@ -167,9 +176,13 @@ Measured on the Thermaltake's HID endpoint, 1110x540:
 about 6.5 MB/s either way, so frame size sets the ceiling. 30 fps is
 comfortable. Pacing comes from ffmpeg's `-re`: without it the decode runs flat
 out and, since the panel is not the bottleneck at these sizes, the video plays
-several times too fast. A wall-clock check timed from the *first frame* - not
-from the spawn, or ffmpeg's startup latency reads as permanent lag - drops
-frames if playback ever slips behind.
+several times too fast.
+
+`-re` alone is still not enough: ffmpeg hands over a burst of buffered frames
+when it starts, so each clip would open with a brief fast-forward. A wall-clock
+pacer waits when it is ahead and drops frames when it is more than half a
+second behind. It is timed from the *first frame*, not from the spawn - count
+ffmpeg's startup latency as lag and the guard drops every frame in the file.
 
 There is no audio: the panel has no speaker, and `-an` keeps the stream to
 video only.

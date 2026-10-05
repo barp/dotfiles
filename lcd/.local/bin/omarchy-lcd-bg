@@ -33,6 +33,8 @@ import sys
 import time
 
 STATE = os.path.expanduser("~/.local/state/omarchy/current")
+# Name of the video set now playing, for the switch keybinding's notification.
+ACTIVE_SET = os.path.expanduser("~/.local/state/omarchy/lcd-video-set")
 CONFIG = os.path.expanduser("~/.config/omarchy/lcd-bg.json")
 # Per-machine overrides, merged over CONFIG and never versioned.  How a panel
 # is physically mounted - which way up it sits in the case - cannot be probed
@@ -50,11 +52,13 @@ DEFAULTS = {
     "thermaltake": {"enabled": True, "brightness": 100, "rotate": 0,
                     "stats": False, "stats_font": None,
                     "video": None, "video_fps": 30, "video_quality": 6,
-                    "video_loop": True, "video_shuffle": False},
+                    "video_loop": True, "video_shuffle": False,
+                    "video_sets": None},
     "thermalright": {"enabled": True, "resolution": None, "circle": False,
                      "rotate": 0, "stats": False, "stats_font": None,
                      "video": None, "video_fps": 30, "video_quality": 6,
-                     "video_loop": True, "video_shuffle": False},
+                     "video_loop": True, "video_shuffle": False,
+                     "video_sets": None},
 }
 
 
@@ -624,6 +628,16 @@ class Thermaltake:
             raise
         return info
 
+    def wake(self):
+        """Re-arm realtime frame display.
+
+        The panel drops back to its own screen after `timeout` seconds with no
+        frames (5 by default) and does *not* come back on its own: it keeps
+        accepting frames and showing none of them. Any pause longer than that
+        - an empty video set, a slow decode start - has to be followed by
+        this, or the panel sits dark while the daemon streams happily."""
+        self.command("POST realtimeDisplay 1", json.dumps({"enable": True}))
+
     def send(self, jpeg):
         if not 0 < len(jpeg) <= self.MAX_JPEG:
             raise ValueError(f"JPEG is {len(jpeg)} bytes, limit {self.MAX_JPEG}")
@@ -783,6 +797,9 @@ class Thermalright:
                 f'"resolution": "WxH" under "thermalright" in {LOCAL_CONFIG}')
         self.size = (width, height)
 
+    def wake(self):
+        """No-op: this protocol has no display mode to fall out of."""
+
     def send(self, jpeg):
         if self.pm == 32:
             raise RuntimeError("PM=32 panels take raw RGB565, not JPEG")
@@ -857,17 +874,49 @@ class VideoPlayer(threading.Thread):
     RETRY = 15.0
     VIDEO_EXTS = (".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v", ".gif")
 
-    def __init__(self, screen, paths, fps=30, quality=6, loop=True,
+    def __init__(self, screen, sets, fps=30, quality=6, loop=True,
                  shuffle=False):
         super().__init__(daemon=True, name=f"video:{screen.name}")
         self.screen = screen
-        self.paths = self._resolve(paths)
+        # Specs are kept raw and resolved at play time, so a file dropped into
+        # a folder joins the playlist without restarting the daemon.
+        self.sets = list(sets or ())
+        self.index = 0
         self.fps = max(1, int(fps))
         self.quality = max(2, min(31, int(quality)))
         self.loop = loop
         self.shuffle = shuffle
         self._stop = threading.Event()
+        self._advance = False       # set from a signal handler
         self._proc = None
+
+    @property
+    def paths(self):
+        """Files in the active set, resolved now."""
+        return self._resolve(self.sets[self.index]) if self.sets else []
+
+    def label(self, index=None):
+        """A short name for a set - the folder's own name where there is one."""
+        if not self.sets:
+            return "(none)"
+        position = self.index if index is None else index
+        spec = self.sets[position]
+        if isinstance(spec, (str, bytes)):
+            name = os.path.basename(str(spec).rstrip(os.sep))
+            if name:
+                return name
+        return f"set {position + 1}"
+
+    def next_set(self):
+        """Switch to the next set and interrupt what is playing now."""
+        if len(self.sets) < 2:
+            return None
+        self.index = (self.index + 1) % len(self.sets)
+        self._advance = True
+        proc = self._proc
+        if proc and proc.poll() is None:
+            proc.terminate()        # unblock the frame loop immediately
+        return self.label()
 
     @classmethod
     def _resolve(cls, paths):
@@ -891,6 +940,7 @@ class VideoPlayer(threading.Thread):
 
     def stop(self):
         self._stop.set()
+        self._advance = True        # wake anything waiting on a switch
         proc, self._proc = self._proc, None
         if proc and proc.poll() is None:
             proc.terminate()
@@ -913,34 +963,97 @@ class VideoPlayer(threading.Thread):
                 "-re", "-i", path, "-an", "-vf", ",".join(chain),
                 "-q:v", str(self.quality), "-f", "mjpeg", "-"]
 
+    def _idle(self):
+        """Wait for a set switch, re-checking periodically - so files added to
+        an empty folder are picked up without restarting anything."""
+        deadline = time.monotonic() + self.RETRY
+        while time.monotonic() < deadline:
+            if self._stop.is_set() or self._advance:
+                return
+            time.sleep(0.25)
+
     def run(self):
         while not self._stop.is_set():
-            order = list(self.paths)
+            self._advance = False
+            playlist = self.paths
+
+            # Recorded before the empty check, not after: writing it only for
+            # sets that have files meant switching to an empty one left the
+            # file stale, and the keybinding could not tell a real switch from
+            # nothing happening. The index makes the comparison reliable even
+            # if two sets share a folder name.
+            try:
+                os.makedirs(os.path.dirname(ACTIVE_SET), exist_ok=True)
+                with open(ACTIVE_SET, "w") as fh:
+                    fh.write("%d\t%s\t%d\n"
+                             % (self.index, self.label(), len(playlist)))
+            except OSError:
+                pass        # cosmetic only - never worth failing playback for
+
+            if not playlist:
+                log(f"{self.screen.name}: {self.label()} holds no video files")
+                self._idle()
+                continue
+
+            order = list(playlist)
             if self.shuffle:
                 random.shuffle(order)
             played = 0
-            for path in order:
+            position = 0
+            while position < len(order):
                 if self._stop.is_set():
                     return
+                if self._advance:
+                    break
+                path = order[position]
+                position += 1
                 if not self.screen.ready:
                     self.screen.next_try = 0.0
                     self.screen.connect(time.monotonic())
                     if not self.screen.ready:
-                        self._stop.wait(self.RETRY)
+                        self._idle()
                         continue
+                if not os.path.exists(path):
+                    continue        # deleted since this pass began
                 if self._play_once(path):
                     played += 1
-            # One unplayable file just gets skipped - a playlist should not
-            # die because one entry was deleted. A list where *nothing* plays
-            # would otherwise spin at full speed forever, so that ends it.
+                # Re-read the folder between clips and fold in anything new.
+                # Switching sets already rescans, but without this a file
+                # dropped into the set that is *already* playing waits for the
+                # whole playlist to wrap before it is noticed.
+                fresh = [p for p in self.paths if p not in order]
+                if fresh:
+                    if self.shuffle:
+                        random.shuffle(fresh)
+                    order.extend(fresh)
+                    log(f"{self.screen.name}: picked up {len(fresh)} new "
+                        f"file(s) in {self.label()}")
+
+            if self._advance:
+                continue
+            # One unplayable file just gets skipped - a playlist should not die
+            # because an entry was deleted. A set where *nothing* plays would
+            # otherwise spin at full speed, so it waits for a switch instead of
+            # giving up: the folder may be fixed or filled while we sit here.
             if played == 0:
-                log(f"{self.screen.name}: nothing in the playlist could be played")
-                return
+                log(f"{self.screen.name}: nothing in {self.label()} could be played")
+                self._idle()
+                continue
             if not self.loop:
                 return
 
     def _play_once(self, path):
         """One pass over one file. False means that file did not play."""
+        # Frames may have stopped for longer than the panel's timeout while a
+        # set was empty or a file was being skipped, in which case the panel
+        # has quietly left realtime mode.
+        try:
+            self.screen.driver.wake()
+        except Exception as e:
+            log(f"{self.screen.name}: cannot wake panel ({e})")
+            self.screen.driver.close()
+            self.screen.ready = False
+            return False
         try:
             proc = subprocess.Popen(self._command(path), stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, bufsize=0)
@@ -963,7 +1076,7 @@ class VideoPlayer(threading.Thread):
         slack = max(0.5, period * 4)
         try:
             for index, frame in enumerate(mjpeg_frames(proc.stdout)):
-                if self._stop.is_set():
+                if self._stop.is_set() or self._advance:
                     break
                 now = time.monotonic()
                 if started is None:
@@ -987,14 +1100,34 @@ class VideoPlayer(threading.Thread):
                     break
                 shown += 1
         finally:
+            # Tear down in this order or the thread deadlocks. Breaking out of
+            # the frame loop stops draining stdout; ffmpeg then blocks inside
+            # write() on a full pipe and never gets to act on SIGTERM, so a
+            # plain wait() or stderr.read() here waits forever. Closing stdout
+            # first turns that blocked write into EPIPE and lets it exit.
             if proc.poll() is None:
                 proc.terminate()
-            err = b""
             try:
-                err = proc.stderr.read() or b""
+                proc.stdout.close()
             except Exception:
                 pass
-            proc.wait()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    log(f"{self.screen.name}: ffmpeg will not exit")
+            err = b""
+            try:
+                err = proc.stderr.read() or b""   # process is gone: EOF at once
+            except Exception:
+                pass
+            try:
+                proc.stderr.close()
+            except Exception:
+                pass
             self._proc = None
 
         if shown == 0:
@@ -1197,26 +1330,44 @@ def run(config, screens):
     players = []
     for screen in list(screens):
         section = screen.driver.config
-        path = section.get("video")
-        if not path:
+        # video_sets is a list of playlists the keybinding switches between;
+        # video is the single-playlist form. Either entry may be a file, a
+        # list of files, or a folder.
+        sets = section.get("video_sets") or (
+            [section["video"]] if section.get("video") else [])
+        if not sets:
             continue
-        player = VideoPlayer(screen, path,
+        player = VideoPlayer(screen, sets,
                              fps=section.get("video_fps", 30),
                              quality=section.get("video_quality", 6),
                              loop=section.get("video_loop", True),
                              shuffle=section.get("video_shuffle", False))
-        if not player.paths:
-            # An empty folder or a blank list: leave the panel on backgrounds
-            # rather than handing it to a player with nothing to show.
-            log(f"{screen.name}: no video files found, showing backgrounds")
+        if not any(VideoPlayer._resolve(spec) for spec in player.sets):
+            # Every set empty: leave the panel on backgrounds rather than hand
+            # it to a player with nothing to show. One empty set among several
+            # is fine - it may be filled later, and is resolved afresh on each
+            # switch.
+            log(f"{screen.name}: no video files in any set, showing backgrounds")
             continue
         players.append(player)
         screens.remove(screen)
     for player in players:
-        names = ", ".join(os.path.basename(x) for x in player.paths)
-        log(f"{player.screen.name}: playlist of {len(player.paths)} "
-            f"at {player.fps} fps: {names}")
+        sets = ", ".join(player.label(i) for i in range(len(player.sets)))
+        log(f"{player.screen.name}: {len(player.sets)} video set(s) at "
+            f"{player.fps} fps [{sets}], starting on {player.label()} "
+            f"({len(player.paths)} files)")
         player.start()
+
+    # SUPER+SHIFT+V sends SIGUSR2. The handler only flips a flag and signals
+    # ffmpeg, so the switch takes effect within a frame rather than waiting
+    # for the next keepalive tick.
+    def on_usr2(_signum, _frame):
+        for player in players:
+            moved = player.next_set()
+            if moved:
+                log(f"{player.screen.name}: switching to {moved}")
+
+    signal.signal(signal.SIGUSR2, on_usr2)
 
     playlist = Playlist(bool(config["shuffle"]))
     theme = None
@@ -1344,6 +1495,10 @@ def main():
         for key in ("thermaltake", "thermalright"):
             if args.panel in (None, key):
                 config[key]["video"] = args.video
+                # An explicit --video must win over configured video_sets,
+                # which are consulted first and would otherwise make the flag
+                # silently do nothing.
+                config[key]["video_sets"] = None
                 if args.video_fps:
                     config[key]["video_fps"] = args.video_fps
                 if args.video_quality:

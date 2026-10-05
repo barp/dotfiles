@@ -163,9 +163,29 @@ than on the 2 s keepalive tick:
 `video` takes one path, a list, or a directory - a directory is expanded to the
 video files inside it, so a playlist can be a folder to drop files into rather
 than a list to keep editing. Clips play in order (or shuffled) and the list
-repeats. A file that will not play is skipped rather than ending the playlist;
-only a list where *nothing* plays gives up, and the panel then falls back to
-backgrounds.
+repeats. A file that will not play is skipped rather than ending the playlist.
+
+`video_sets` replaces `video` with several playlists that a keybinding cycles
+between:
+
+```json
+"video_sets": ["~/Videos/lcd/a", "~/Videos/lcd/b"],
+"video_fps": 60, "video_quality": 4
+```
+
+**SUPER + SHIFT + V** (`omarchy-lcd-video-next`) switches to the next set and
+notifies which one took over. It sends `SIGUSR2`; the handler only flips a flag
+and signals ffmpeg, so the change lands within a frame - measured at 68 ms end
+to end - rather than waiting for the next keepalive tick.
+
+Each set is resolved **when it starts playing**, not at startup, so a file
+dropped into a folder joins that set without restarting the daemon. An empty
+set is not an error: the panel holds, the daemon says so, and it re-checks
+every 15 s, which is how a folder filled later starts playing on its own. Only
+when *every* set is empty does the panel fall back to backgrounds.
+
+The live set's name is written to `~/.local/state/omarchy/lcd-video-set`, which
+is what lets the keybinding name it in the notification rather than guessing.
 
 ffmpeg does the decode, scale, crop, rotate and JPEG encode, so the daemon only
 splits the MJPEG stream and writes frames - the panel wants JPEG, which is what
@@ -195,6 +215,7 @@ video only.
 
 | Command | |
 |---|---|
+| `omarchy-lcd-video-next` | switch to the next video set (SUPER+SHIFT+V) |
 | `omarchy-lcd-bg --probe` | identify the panels and their geometry |
 | `omarchy-lcd-bg --test` | corner-marked pattern, to check size and rotation |
 | `systemctl --user reload omarchy-lcd-bg` | jump to the next pictures |

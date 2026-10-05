@@ -60,6 +60,12 @@ o.bind("SUPER + ALT + G", "Google Messages",
 o.bind("SUPER + CTRL + SHIFT + P", "Screen record a region",
   "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord")
 
+-- Cycle the case LCD between its video sets (~/Videos/lcd/a, .../b). Sends
+-- SIGUSR2 to omarchy-lcd-bg and notifies which set took over. SUPER+SHIFT+V
+-- was unbound in v4, so no hl.unbind is needed -- note SUPER+V itself is
+-- Universal paste and is left alone.
+o.bind("SUPER + SHIFT + V", "LCD video set", "omarchy-lcd-video-next")
+
 ------------------------------------------------------------------
 -- macOS-style workspace switching
 ------------------------------------------------------------------

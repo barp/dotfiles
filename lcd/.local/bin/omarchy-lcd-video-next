@@ -1,0 +1,44 @@
+#!/bin/bash
+# Switch the case LCD to the next video set and say what actually happened.
+#
+# The daemon switches on SIGUSR2 and records the live set in $STATE as
+# "index<TAB>name<TAB>file-count", rewritten for every set it selects -
+# including an empty one. Comparing the index is what makes "a switch
+# happened" distinguishable from "there is only one set", and the count is
+# what lets an empty folder be reported as empty rather than as silence.
+
+set -uo pipefail
+SERVICE=omarchy-lcd-bg.service
+STATE="$HOME/.local/state/omarchy/lcd-video-set"
+
+notify() { omarchy-notification-send "LCD videos" "$1" -t 2500 2>/dev/null || true; }
+
+if ! systemctl --user is-active --quiet "$SERVICE"; then
+  notify "Not running"
+  exit 1
+fi
+
+before_index="$(cut -f1 "$STATE" 2>/dev/null || true)"
+systemctl --user kill --kill-whom=main -s USR2 "$SERVICE" \
+  || { notify "Could not switch"; exit 1; }
+
+# Switching away from an empty set means waiting out one poll of the idle
+# loop, so allow more than a frame's worth of time before giving up.
+for _ in $(seq 40); do
+  index="$(cut -f1 "$STATE" 2>/dev/null || true)"
+  [ -n "$index" ] && [ "$index" != "$before_index" ] && break
+  sleep 0.05
+done
+
+if [ -z "${index:-}" ] || [ "$index" = "$before_index" ]; then
+  notify "Only one video set configured"
+  exit 0
+fi
+
+name="$(cut -f2 "$STATE" 2>/dev/null)"
+count="$(cut -f3 "$STATE" 2>/dev/null)"
+if [ "${count:-0}" -gt 0 ] 2>/dev/null; then
+  notify "Now playing: $name ($count)"
+else
+  notify "$name is empty - press again for the next set"
+fi

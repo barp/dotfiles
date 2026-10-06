@@ -1,0 +1,40 @@
+#!/bin/bash
+# Skip to the next clip within the current video set.
+#
+# The daemon records the live clip in field 4 of $STATE, rewritten as each one
+# starts; waiting for that to change is what lets the notification name the
+# clip that took over rather than the one that was interrupted.
+
+set -uo pipefail
+SERVICE=omarchy-lcd-bg.service
+STATE="$HOME/.local/state/omarchy/lcd-video-set"
+
+notify() { omarchy-notification-send "LCD videos" "$1" -t 2000 2>/dev/null || true; }
+
+if ! systemctl --user is-active --quiet "$SERVICE"; then
+  notify "Not running"
+  exit 1
+fi
+
+count="$(cut -f3 "$STATE" 2>/dev/null || echo 0)"
+if ! [ "${count:-0}" -gt 1 ] 2>/dev/null; then
+  # Skipping would just restart the same file; say so rather than claim a move.
+  notify "Only one video in this set"
+  exit 0
+fi
+
+before="$(cut -f4 "$STATE" 2>/dev/null || true)"
+systemctl --user kill --kill-whom=main -s SIGRTMIN+1 "$SERVICE" \
+  || { notify "Could not skip"; exit 1; }
+
+for _ in $(seq 40); do
+  now="$(cut -f4 "$STATE" 2>/dev/null || true)"
+  [ -n "$now" ] && [ "$now" != "$before" ] && break
+  sleep 0.05
+done
+
+if [ -n "${now:-}" ] && [ "$now" != "$before" ]; then
+  notify "Now playing: $now"
+else
+  notify "Could not skip"
+fi

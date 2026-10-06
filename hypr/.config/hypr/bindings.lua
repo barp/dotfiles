@@ -29,7 +29,6 @@ o.bind("SUPER + X", "X", { webapp = "https://x.com/" })
 ------------------------------------------------------------------
 
 o.bind("SUPER + B", "Browser", "google-chrome-stable")
-o.bind("SUPER + M", "Music",  { omarchy = "spotify" })
 o.bind("SUPER + N", "Editor", { omarchy = "editor" })
 o.bind("SUPER + D", "Docker", { tui = "lazydocker" })
 o.bind("SUPER + A", "T3 Chat", { webapp = "https://t3.chat" })
@@ -66,6 +65,9 @@ o.bind("SUPER + CTRL + SHIFT + P", "Screen record a region",
 -- Universal paste and is left alone.
 o.bind("SUPER + SHIFT + V", "LCD video set", "omarchy-lcd-video-next")
 
+-- Skip to the next clip in the current set. SUPER+ALT+V was unbound in v4.
+o.bind("SUPER + ALT + V", "LCD next video", "omarchy-lcd-video-skip")
+
 ------------------------------------------------------------------
 -- macOS-style workspace switching
 ------------------------------------------------------------------
@@ -81,3 +83,20 @@ o.bind("SUPER + SHIFT + V", "LCD video set", "omarchy-lcd-video-next")
 -- SUPER + TAB / SUPER + SHIFT + TAB still switch workspaces too.
 o.bind("CTRL + LEFT", "Previous workspace", hl.dsp.focus({ workspace = "e-1" }))
 o.bind("CTRL + RIGHT", "Next workspace", hl.dsp.focus({ workspace = "e+1" }))
+
+------------------------------------------------------------------
+-- Sentence mining (~/sentence-miner)
+------------------------------------------------------------------
+
+-- SUPER+M was Spotify; mining took it. Music is still on SUPER+SHIFT+M (the
+-- Omarchy default), so nothing was lost. v4 leaves bare SUPER+M free, and
+-- ALT/CTRL+M were unbound, so none of these need an hl.unbind.
+--
+-- Bare M mines the line the ring thinks you meant: a reaction-time floor means
+-- pressing a beat late still gets the line you were reading, not the one that
+-- replaced it. CTRL+M steps back one further when even that was too slow.
+-- ALT+M opens the word picker when the automatic i+1 choice is not the word
+-- you wanted.
+o.bind("SUPER + M", "Mine sentence", "$HOME/sentence-miner/bind.sh grab --shot")
+o.bind("SUPER + ALT + M", "Mine (choose word)", "$HOME/sentence-miner/bind.sh grab --shot --pick")
+o.bind("SUPER + CTRL + M", "Mine previous line", "$HOME/sentence-miner/bind.sh grab --shot --back 1")

@@ -39,3 +39,11 @@ require("default.hypr.toggles")
 -- Only VA-API video decode is affected: Vulkan/OpenGL/CUDA and games are not
 -- (__GLX_VENDOR_LIBRARY_NAME stays "nvidia").
 hl.env("LIBVA_DRIVER_NAME", "radeonsi")
+
+-- Sentence-miner word picker: a transient review dialog, not a tiled window.
+-- Floats centered so it lands over the game without reflowing the workspace.
+o.window({ class = "^dev\\.local\\.sentence-miner\\.picker$" }, {
+  float = true,
+  center = true,
+  size = { 860, 820 },
+})

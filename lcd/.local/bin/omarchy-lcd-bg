@@ -52,11 +52,13 @@ DEFAULTS = {
     "thermaltake": {"enabled": True, "brightness": 100, "rotate": 0,
                     "stats": False, "stats_font": None,
                     "video": None, "video_fps": 30, "video_quality": 6,
+                    "video_hwaccel": "auto",
                     "video_loop": True, "video_shuffle": False,
                     "video_sets": None},
     "thermalright": {"enabled": True, "resolution": None, "circle": False,
                      "rotate": 0, "stats": False, "stats_font": None,
                      "video": None, "video_fps": 30, "video_quality": 6,
+                     "video_hwaccel": "auto",
                      "video_loop": True, "video_shuffle": False,
                      "video_sets": None},
 }
@@ -833,6 +835,70 @@ class Thermalright:
 
 
 # -- video ------------------------------------------------------------------
+def _render_nodes():
+    """DRM render nodes, GPUs driving no display first.
+
+    Decoding on a card that is not driving a monitor keeps a permanent 60fps
+    job off the desktop's GPU. Which node that is cannot be hardcoded - these
+    dotfiles are shared between machines - but connector status can be read,
+    so it is probed rather than assumed."""
+    nodes = []
+    for path in sorted(glob.glob("/dev/dri/renderD*")):
+        lit = False
+        try:
+            pci = os.path.realpath("/sys/class/drm/%s/device"
+                                   % os.path.basename(path))
+            for status in glob.glob(os.path.join(pci, "drm", "card*",
+                                                 "card*-*", "status")):
+                with open(status) as fh:
+                    lit = lit or fh.read().strip() == "connected"
+        except OSError:
+            pass            # unreadable sysfs just means "no preference"
+        nodes.append((lit, path))
+    return [path for lit, path in sorted(nodes)]
+
+
+_VAAPI = None           # probe result, cached for the life of the process
+
+
+def vaapi_device(setting="auto"):
+    """A render node that can scale through VAAPI, or None for software.
+
+    ffmpeg listing mjpeg_vaapi proves nothing - AMD's VCN exposes a JPEG
+    decode engine but no JPEG *encode* entrypoint, so that encoder fails to
+    open on the very device it is named for. Only the decode and scale run on
+    the GPU here; the JPEG encode stays in software because no consumer GPU
+    has an encoder for it. One short probe settles whether the device works
+    at all, and per-clip fallback handles codecs it cannot decode."""
+    global _VAAPI
+    if setting in (False, "off", "none"):
+        return None
+    if isinstance(setting, str) and setting.startswith("/dev/"):
+        return setting
+    if _VAAPI is None:
+        _VAAPI = ""
+        for node in _render_nodes():
+            probe = ["ffmpeg", "-nostdin", "-loglevel", "error",
+                     "-vaapi_device", node,
+                     "-f", "lavfi", "-i", "testsrc=size=64x64:rate=1:duration=1",
+                     "-vf", "format=nv12,hwupload,scale_vaapi=w=32:h=32,"
+                            "hwdownload,format=nv12",
+                     "-f", "null", "-"]
+            try:
+                ok = subprocess.run(probe, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    timeout=15).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+            if ok:
+                _VAAPI = node
+                log("video: hardware decode on %s" % node)
+                break
+        if not _VAAPI:
+            log("video: no usable VAAPI device, decoding in software")
+    return _VAAPI or None
+
+
 def _rotate_filter(rotate):
     """ffmpeg filter that puts a frame into panel orientation."""
     return {90: "transpose=1", 180: "hflip,vflip",
@@ -875,7 +941,7 @@ class VideoPlayer(threading.Thread):
     VIDEO_EXTS = (".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v", ".gif")
 
     def __init__(self, screen, sets, fps=30, quality=6, loop=True,
-                 shuffle=False):
+                 shuffle=False, hwaccel="auto"):
         super().__init__(daemon=True, name=f"video:{screen.name}")
         self.screen = screen
         # Specs are kept raw and resolved at play time, so a file dropped into
@@ -886,8 +952,11 @@ class VideoPlayer(threading.Thread):
         self.quality = max(2, min(31, int(quality)))
         self.loop = loop
         self.shuffle = shuffle
+        self.hwaccel = hwaccel
+        self._no_hw = set()         # clips this GPU turned out not to decode
         self._stop = threading.Event()
         self._advance = False       # set from a signal handler
+        self._skip = False          # likewise: cut the current clip short
         self._proc = None
 
     @property
@@ -906,6 +975,23 @@ class VideoPlayer(threading.Thread):
             if name:
                 return name
         return f"set {position + 1}"
+
+    def _record(self, count, current=""):
+        """Note the live set and clip, for the keybindings' notifications."""
+        try:
+            os.makedirs(os.path.dirname(ACTIVE_SET), exist_ok=True)
+            with open(ACTIVE_SET, "w") as fh:
+                fh.write("%d\t%s\t%d\t%s\n"
+                         % (self.index, self.label(), count, current))
+        except OSError:
+            pass            # cosmetic only - never worth failing playback for
+
+    def skip(self):
+        """Cut the current clip short and move to the next one in this set."""
+        self._skip = True
+        proc = self._proc
+        if proc and proc.poll() is None:
+            proc.terminate()
 
     def next_set(self):
         """Switch to the next set and interrupt what is playing now."""
@@ -945,13 +1031,24 @@ class VideoPlayer(threading.Thread):
         if proc and proc.poll() is None:
             proc.terminate()
 
-    def _command(self, path):
+    def _command(self, path, device=None):
         driver = self.screen.driver
         rotate = driver.rotate_image % 360
         w, h = driver.size
         cw, ch = (h, w) if rotate in (90, 270) else (w, h)
-        chain = [f"scale={cw}:{ch}:force_original_aspect_ratio=increase",
-                 f"crop={cw}:{ch}", f"fps={self.fps}"]
+        fit = "force_original_aspect_ratio=increase"
+        if device:
+            # Scale on the GPU, then bring the frame back for crop, rotate and
+            # the JPEG encode. crop and transpose cannot operate on a VAAPI
+            # frame: left ahead of hwdownload ffmpeg silently reorders them and
+            # the panel receives the uncropped aspect - 1110x624 instead of
+            # 1110x540 - with no warning and a zero exit status.
+            chain = [f"scale_vaapi=w={cw}:h={ch}:{fit}",
+                     "hwdownload", "format=nv12",
+                     f"crop={cw}:{ch}", f"fps={self.fps}"]
+        else:
+            chain = [f"scale={cw}:{ch}:{fit}",
+                     f"crop={cw}:{ch}", f"fps={self.fps}"]
         spin = _rotate_filter(rotate)
         if spin:
             chain.append(spin)
@@ -959,9 +1056,12 @@ class VideoPlayer(threading.Thread):
         # decode runs flat out: these frames compress small enough that the
         # panel is not the bottleneck either, and the video plays at several
         # times speed.
-        return ["ffmpeg", "-nostdin", "-loglevel", "error",
-                "-re", "-i", path, "-an", "-vf", ",".join(chain),
-                "-q:v", str(self.quality), "-f", "mjpeg", "-"]
+        head = ["ffmpeg", "-nostdin", "-loglevel", "error"]
+        if device:
+            head += ["-hwaccel", "vaapi", "-hwaccel_device", device,
+                     "-hwaccel_output_format", "vaapi"]
+        return head + ["-re", "-i", path, "-an", "-vf", ",".join(chain),
+                       "-q:v", str(self.quality), "-f", "mjpeg", "-"]
 
     def _idle(self):
         """Wait for a set switch, re-checking periodically - so files added to
@@ -982,13 +1082,7 @@ class VideoPlayer(threading.Thread):
             # file stale, and the keybinding could not tell a real switch from
             # nothing happening. The index makes the comparison reliable even
             # if two sets share a folder name.
-            try:
-                os.makedirs(os.path.dirname(ACTIVE_SET), exist_ok=True)
-                with open(ACTIVE_SET, "w") as fh:
-                    fh.write("%d\t%s\t%d\n"
-                             % (self.index, self.label(), len(playlist)))
-            except OSError:
-                pass        # cosmetic only - never worth failing playback for
+            self._record(len(playlist))
 
             if not playlist:
                 log(f"{self.screen.name}: {self.label()} holds no video files")
@@ -1015,6 +1109,8 @@ class VideoPlayer(threading.Thread):
                         continue
                 if not os.path.exists(path):
                     continue        # deleted since this pass began
+                self._skip = False
+                self._record(len(order), os.path.basename(path))
                 if self._play_once(path):
                     played += 1
                 # Re-read the folder between clips and fold in anything new.
@@ -1044,6 +1140,22 @@ class VideoPlayer(threading.Thread):
 
     def _play_once(self, path):
         """One pass over one file. False means that file did not play."""
+        device = None if path in self._no_hw else vaapi_device(self.hwaccel)
+        if self._stream(path, device, report=not device):
+            return True
+        # Whether the GPU can decode a given clip is only knowable per file -
+        # a GIF or an exotic profile yields no frames at all - so one failure
+        # demotes that clip rather than the whole playlist. An interrupted
+        # clip is not a failure and must not be retried.
+        if device and not (self._stop.is_set() or self._advance or self._skip):
+            self._no_hw.add(path)
+            log(f"{self.screen.name}: no hardware decode for "
+                f"{os.path.basename(path)}, using software")
+            return self._stream(path, None, report=True)
+        return False
+
+    def _stream(self, path, device, report=True):
+        """Run one ffmpeg and pump its frames to the panel."""
         # Frames may have stopped for longer than the panel's timeout while a
         # set was empty or a file was being skipped, in which case the panel
         # has quietly left realtime mode.
@@ -1055,7 +1167,8 @@ class VideoPlayer(threading.Thread):
             self.screen.ready = False
             return False
         try:
-            proc = subprocess.Popen(self._command(path), stdout=subprocess.PIPE,
+            proc = subprocess.Popen(self._command(path, device),
+                                    stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, bufsize=0)
         except OSError as e:
             log(f"{self.screen.name}: cannot start ffmpeg ({e})")
@@ -1076,7 +1189,7 @@ class VideoPlayer(threading.Thread):
         slack = max(0.5, period * 4)
         try:
             for index, frame in enumerate(mjpeg_frames(proc.stdout)):
-                if self._stop.is_set() or self._advance:
+                if self._stop.is_set() or self._advance or self._skip:
                     break
                 now = time.monotonic()
                 if started is None:
@@ -1131,9 +1244,11 @@ class VideoPlayer(threading.Thread):
             self._proc = None
 
         if shown == 0:
-            detail = err.decode(errors="replace").strip().splitlines()
-            log(f"{self.screen.name}: no frames from {os.path.basename(path)}"
-                + (f" - {detail[-1]}" if detail else ""))
+            if report:
+                detail = err.decode(errors="replace").strip().splitlines()
+                log(f"{self.screen.name}: no frames from "
+                    f"{os.path.basename(path)}"
+                    + (f" - {detail[-1]}" if detail else ""))
             return False
         elapsed = max(1e-6, time.monotonic() - (started or time.monotonic()))
         log(f"{self.screen.name}: {os.path.basename(path)}: {shown} frames "
@@ -1340,6 +1455,7 @@ def run(config, screens):
         player = VideoPlayer(screen, sets,
                              fps=section.get("video_fps", 30),
                              quality=section.get("video_quality", 6),
+                             hwaccel=section.get("video_hwaccel", "auto"),
                              loop=section.get("video_loop", True),
                              shuffle=section.get("video_shuffle", False))
         if not any(VideoPlayer._resolve(spec) for spec in player.sets):
@@ -1368,6 +1484,15 @@ def run(config, screens):
                 log(f"{player.screen.name}: switching to {moved}")
 
     signal.signal(signal.SIGUSR2, on_usr2)
+
+    # SUPER+ALT+V. A real-time signal rather than another SIGUSR, which are
+    # both spoken for. Note its default action is to kill the process, so the
+    # handler has to exist before anything sends it.
+    def on_skip(_signum, _frame):
+        for player in players:
+            player.skip()
+
+    signal.signal(signal.SIGRTMIN + 1, on_skip)
 
     playlist = Playlist(bool(config["shuffle"]))
     theme = None

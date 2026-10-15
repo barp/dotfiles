@@ -47,3 +47,10 @@ o.window({ class = "^dev\\.local\\.sentence-miner\\.picker$" }, {
   center = true,
   size = { 860, 820 },
 })
+
+-- Keep the screensaver and idle lock away while a game is up. Omarchy ships
+-- idle_inhibit only for the Steam client, RetroArch, Moonlight and GeForce NOW,
+-- so Proton/native games (class steam_app_<id>) still idled out mid-session.
+-- "always" rather than "fullscreen": a borderless-windowed game counts too.
+o.window({ class = "^steam_app_\\d+$" }, { idle_inhibit = "always" })
+o.window({ class = "^gamescope$" }, { idle_inhibit = "always" })
